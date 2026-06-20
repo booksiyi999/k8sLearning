@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>🍒 樱桃的 K8s Quest</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+</head>
+<body>
+<div x-data="quest()" x-init="loadLevels()">
+  <header>
+    <h1>🍒 樱桃的 K8s Quest</h1>
+    <p>从 0 到 1 玩转 Kubernetes</p>
+  </header>
+  <main>
+    <aside>
+      <h3>关卡列表</h3>
+      <ul>
+        <template x-for="lv in levels" :key="lv.id">
+          <li>
+            <button @click="loadLevel(lv.id)" :class="{ active: currentLevel?.id === lv.id }">
+              <span x-text="lv.id"></span> · <span x-text="lv.title"></span>
+            </button>
+          </li>
+        </template>
+      </ul>
+    </aside>
+    <section>
+      <template x-if="currentLevel">
+        <article>
+          <h2><span x-text="currentLevel.id"></span> · <span x-text="currentLevel.title"></span></h2>
+          <div class="description" x-html="renderedDescription"></div>
+          <textarea x-model="userYaml" rows="15" spellcheck="false"></textarea>
+          <div class="actions">
+            <button @click="runCheck()" :disabled="running">▶ 运行</button>
+            <button @click="resetYaml()">重置</button>
+          </div>
+          <template x-if="result">
+            <div class="result" :class="{ ok: result.ok, fail: !result.ok }">
+              <h3 x-text="result.ok ? '✓ 通过！' : '✗ 未通过'"></h3>
+              <p x-show="result.error" x-text="result.error"></p>
+              <ul>
+                <template x-for="hint in result.hints">
+                  <li x-text="hint"></li>
+                </template>
+              </ul>
+              <template x-if="result.cluster_state">
+                <pre x-text="JSON.stringify(result.cluster_state, null, 2)"></pre>
+              </template>
+            </div>
+          </template>
+        </article>
+      </template>
+    </section>
+  </main>
+  <footer>
+    <p>Made by 🍒 樱桃 (Hermes Agent)</p>
+  </footer>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
