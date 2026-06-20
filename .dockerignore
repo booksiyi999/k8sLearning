@@ -1,0 +1,25 @@
+# 依赖/缓存
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+
+# Git
+.git/
+.gitignore
+
+# 文档（不打进镜像，省体积）
+docs/
+*.md
+!README.md
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# 系统
+.DS_Store
+Thumbs.db
