@@ -393,3 +393,75 @@ spec:
     result = lv.check_fn(yaml)
     assert result.ok is False
     assert "resources" in result.error
+
+
+def test_q1_4_requests_is_string_does_not_crash():
+    """resources.requests 是字符串而非 dict → 失败但不崩溃（边界 B4，高现实性）"""
+    lv = get_level("Q1.4")
+    yaml = """\
+apiVersion: v1
+kind: Pod
+metadata:
+  name: resource-pod
+spec:
+  containers:
+    - name: app
+      image: nginx:1.25
+      resources:
+        requests: "100m"
+        limits:
+          cpu: "500m"
+          memory: "256Mi"
+"""
+    result = lv.check_fn(yaml)
+    assert result.ok is False
+    assert "requests" in result.error
+    assert "字典" in result.error
+
+
+def test_q1_4_limits_is_list_does_not_crash():
+    """resources.limits 是列表而非 dict → 失败但不崩溃（边界 B5）"""
+    lv = get_level("Q1.4")
+    yaml = """\
+apiVersion: v1
+kind: Pod
+metadata:
+  name: resource-pod
+spec:
+  containers:
+    - name: app
+      image: nginx:1.25
+      resources:
+        requests:
+          cpu: "100m"
+          memory: "128Mi"
+        limits: ["500m", "256Mi"]
+"""
+    result = lv.check_fn(yaml)
+    assert result.ok is False
+    assert "limits" in result.error
+    assert "字典" in result.error
+
+
+def test_q1_4_requests_is_number_does_not_crash():
+    """resources.requests 是数字而非 dict → 失败但不崩溃（边界 B6）"""
+    lv = get_level("Q1.4")
+    yaml = """\
+apiVersion: v1
+kind: Pod
+metadata:
+  name: resource-pod
+spec:
+  containers:
+    - name: app
+      image: nginx:1.25
+      resources:
+        requests: 100
+        limits:
+          cpu: "500m"
+          memory: "256Mi"
+"""
+    result = lv.check_fn(yaml)
+    assert result.ok is False
+    assert "requests" in result.error
+    assert "字典" in result.error

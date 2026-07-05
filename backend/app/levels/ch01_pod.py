@@ -316,11 +316,15 @@ def _check_04_resource_limits(user_yaml: str) -> CheckResult:
     # 逐项校验 requests / limits 的 cpu / memory
     for (section, key), want in _Q1_4_EXPECTED.items():
         section_dict = resources.get(section)
-        if not section_dict:
+        if not isinstance(section_dict, dict):
+            # 类型守卫：requests/limits 可能是字符串/列表/数字等 truthy 非 dict 类型，
+            # falsy-only 守卫（if not section_dict）会被 truthy 非 dict 绕过，
+            # 随后 section_dict.get(key) 抛 AttributeError → /api/check 返回 500。
+            # 空值(None)同样被 isinstance 拦截，统一返回缺字段提示。
             return CheckResult(
                 ok=False,
-                error=f"缺少 resources.{section}（需要 cpu 和 memory）",
-                hints=[f"在 resources 下添加 {section}:，下设 cpu 和 memory"],
+                error=f"resources.{section} 缺失或类型错误（必须是包含 cpu 和 memory 的字典）",
+                hints=[f"在 resources 下添加 {section}:，下设 cpu 和 memory 两个键"],
             )
         got = section_dict.get(key)
         if got is None:

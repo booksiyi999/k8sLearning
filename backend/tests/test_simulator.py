@@ -75,3 +75,24 @@ spec:
     # Deployment 创建 3 个虚拟 Pod
     pod_count = sum(1 for p in result.pods.values() if p["metadata"]["labels"].get("app") == "web")
     assert pod_count == 3
+
+
+def test_validate_pod_rejects_string_container_element():
+    """containers 元素是字符串（恰好含 name/image 子串）→ 必须拒绝，不得绕过校验（B8）
+
+    若只做 ``"name" in c`` 子串判断，字符串 "name-image" 会被误判为合法容器，
+    随后在关卡校验里调用 c.get(...) 触发 AttributeError → /api/check HTTP 500。
+    """
+    state = ClusterState()
+    yaml = """
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bad-pod
+spec:
+  containers:
+    - "name-image"
+"""
+    with pytest.raises(K8sError) as exc:
+        apply_manifest(state, yaml)
+    assert "containers" in str(exc.value)

@@ -48,6 +48,11 @@ def _validate_pod(doc: dict) -> None:
     if not isinstance(spec, dict) or not spec.get("containers"):
         raise K8sError("Pod 缺少 spec.containers")
     for i, c in enumerate(spec["containers"]):
+        if not isinstance(c, dict):
+            # 类型守卫：containers 元素必须是 dict。若只做 "name" in c 子串判断，
+            # 字符串如 "name-image" 会被误判为合法容器，绕过校验后在下层
+            # 调用 c.get(...) 时抛 AttributeError → /api/check HTTP 500。
+            raise K8sError(f"Pod spec.containers[{i}] 必须是映射（dict），实际为 {type(c).__name__}")
         if "name" not in c:
             raise K8sError(f"Pod spec.containers[{i}] 缺少 name")
         if "image" not in c:
