@@ -269,3 +269,71 @@ metadata: foo
     with pytest.raises(K8sError) as exc:
         apply_manifest(state, yaml)
     assert "metadata" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# 循环引用检测 (攻击维度 #3): yaml.safe_load 对自引用 anchor (&a / *a) 不报错,
+# 直接构造循环引用 Python dict。若存入 state, FastAPI 序列化 json.dumps 抛
+# ValueError (中间件层, try/except 之外) → HTTP 500。parse 后检测并拒绝。
+# ---------------------------------------------------------------------------
+def test_apply_rejects_recursive_yaml_anchor_labels():
+    """自引用 anchor 在 labels (&a / *a) → 必须拒绝, 不得存入 state"""
+    state = ClusterState()
+    yaml = """
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-pod
+  labels: &a
+    app: cache
+    tier: *a
+spec:
+  containers:
+    - name: web
+      image: nginx:1.25
+"""
+    with pytest.raises(K8sError) as exc:
+        apply_manifest(state, yaml)
+    assert "循环引用" in str(exc.value)
+    # 确保循环结构没有存入 state
+    assert "nginx-pod" not in state.pods
+
+
+def test_apply_rejects_recursive_yaml_anchor_annotations():
+    """自引用 anchor 在 annotations → 必须拒绝"""
+    state = ClusterState()
+    yaml = """
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-pod
+  annotations: &a
+    note: *a
+spec:
+  containers:
+    - name: web
+      image: nginx:1.25
+"""
+    with pytest.raises(K8sError) as exc:
+        apply_manifest(state, yaml)
+    assert "循环引用" in str(exc.value)
+
+
+def test_apply_allows_flat_yaml_alias_no_false_positive():
+    """合法的 flat alias (非自引用, diamond 共享) → 不得误报为循环引用"""
+    state = ClusterState()
+    yaml = """
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-pod
+  labels: &l
+    app: cache
+spec:
+  containers:
+    - name: web
+      image: nginx:1.25
+"""
+    # 不应抛异常 — flat alias 是合法 YAML, 无循环
+    result = apply_manifest(state, yaml)
+    assert "nginx-pod" in result.pods

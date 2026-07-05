@@ -117,6 +117,91 @@ def test_bleeding_response_has_error_message():
     assert body["error"], "error 字段不能为空字符串"
 
 
+# --- 循环引用 YAML anchor (攻击维度 #3: 注入与越权) ---
+# yaml.safe_load 对自引用 anchor (&a / *a) 不报错, 直接构造出循环引用的 Python dict。
+# 该循环结构若落入 result.state 并被 FastAPI 序列化, json.dumps 抛 ValueError
+# (发生在 endpoint try/except 之外的中间件层) → HTTP 500。
+# 修复: parse 后检测循环引用并 raise K8sError → check_fn 的 except 捕获 → 200 ok=False。
+RECURSIVE_ANCHOR_VECTORS = [
+    ("Q1.1 recursive labels (self-ref anchor)", "Q1.1", """
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-pod
+  labels: &a
+    app: cache
+    tier: *a
+spec:
+  containers:
+    - name: web
+      image: nginx:1.25
+"""),
+    ("Q1.1 recursive annotations (self-ref anchor)", "Q1.1", """
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-pod
+  annotations: &a
+    note: *a
+spec:
+  containers:
+    - name: web
+      image: nginx:1.25
+"""),
+    ("Q1.2 recursive labels (self-ref anchor)", "Q1.2", """
+apiVersion: v1
+kind: Pod
+metadata:
+  name: redis-pod
+  labels: &a
+    app: cache
+    tier: *a
+spec:
+  containers:
+    - name: redis
+      image: redis:7-alpine
+"""),
+    ("Q1.1 recursive Deployment annotations (self-ref anchor)", "Q1.1", """
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dep
+  annotations: &a
+    x: *a
+spec:
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: c
+          image: nginx:1.25
+"""),
+]
+
+
+def test_recursive_anchor_never_500():
+    """自引用 YAML anchor 构造的循环引用必须被拒绝为 200 ok=False, 绝不 500。
+
+    循环引用穿透响应序列化路径 (FastAPI 中间件层, try/except 之外) 造成 500。
+    修复在 parse 后检测循环引用并 raise K8sError, 从根源阻断。
+    """
+    failures = []
+    for name, level_id, yaml_text in RECURSIVE_ANCHOR_VECTORS:
+        r = client.post("/api/check", json={"level_id": level_id, "user_yaml": yaml_text})
+        try:
+            body = r.json()
+        except Exception:
+            body = {}
+        if r.status_code != 200 or body.get("ok") is not False:
+            failures.append(
+                f"{name}: HTTP {r.status_code} ok={body.get('ok')} err={body.get('error', '')[:60]!r}"
+            )
+    assert not failures, "循环引用 anchor 穿透成 500 (应全部 200 ok=False):\\n  " + "\\n  ".join(failures)
+
+
 def test_valid_path_unaffected():
     """止血不能误伤正常路径 (Q1.1 valid Pod 仍 200 ok=True)。"""
     r = client.post("/api/check", json={

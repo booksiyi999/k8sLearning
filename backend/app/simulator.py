@@ -15,6 +15,39 @@ class ClusterState:
     services: dict[str, dict] = field(default_factory=dict)
 
 
+def _has_circular_ref(obj, _seen=None):
+    """检测 yaml.safe_load 产物是否含循环引用。
+
+    yaml.safe_load 对自引用 anchor (&a / *a) **不报错**, 直接构造出
+    循环引用的 Python dict (如 labels.tier → labels 自身)。该结构若落入
+    result.state 并被 FastAPI 序列化, json.dumps 抛 ValueError
+    "Circular reference detected" —— 该异常发生在 endpoint try/except
+    **之外的中间件层**, 止血兜不住, 直接 HTTP 500。
+
+    本函数在 parse 后立刻检测, 从根源阻断循环结构进入集群状态。
+    使用 backtracking (seen.add / discard) 只标记当前遍历路径上的 id,
+    避免对 YAML alias 造成的合法共享引用 (diamond, 非环) 误报。
+    """
+    if _seen is None:
+        _seen = set()
+    obj_id = id(obj)
+    if obj_id in _seen:
+        return True
+    if isinstance(obj, dict):
+        _seen.add(obj_id)
+        for v in obj.values():
+            if _has_circular_ref(v, _seen):
+                return True
+        _seen.discard(obj_id)
+    elif isinstance(obj, list):
+        _seen.add(obj_id)
+        for item in obj:
+            if _has_circular_ref(item, _seen):
+                return True
+        _seen.discard(obj_id)
+    return False
+
+
 def apply_manifest(state: ClusterState, yaml_text: str) -> ClusterState:
     """把 YAML 应用到虚拟集群，返回新状态（in-place 修改）。
 
@@ -27,6 +60,13 @@ def apply_manifest(state: ClusterState, yaml_text: str) -> ClusterState:
 
     if not isinstance(doc, dict):
         raise K8sError("YAML 顶层必须是映射（dict）")
+
+    # 循环引用检测: yaml.safe_load 对自引用 anchor (&a / *a) 不报错,
+    # 直接构造出循环引用的 Python dict。该结构若存入 state 并被 FastAPI
+    # 序列化, json.dumps 抛 ValueError (中间件层, try/except 之外) → HTTP 500。
+    # 在此从根源阻断, 转为 K8sError → check_fn 的 except 捕获 → 200 ok=False。
+    if _has_circular_ref(doc):
+        raise K8sError("YAML 含循环引用（自引用 anchor），拒绝应用")
 
     kind = doc.get("kind")
     if kind == "Pod":
