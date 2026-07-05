@@ -33,7 +33,8 @@ metadata:
 """
     with pytest.raises(K8sError) as exc:
         apply_manifest(state, yaml)
-    assert "spec.containers" in str(exc.value)
+    # spec 整体缺失 → 更精确的 "缺少 spec" 文案（而非笼统 spec.containers）
+    assert "spec" in str(exc.value)
 
 def test_apply_unsupported_kind_raises():
     state = ClusterState()
@@ -96,3 +97,175 @@ spec:
     with pytest.raises(K8sError) as exc:
         apply_manifest(state, yaml)
     assert "containers" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# R2 (第 4 轮): Pod spec.containers 集合层 falsy-only guard
+# truthy 非 list（int/dict/str）绕过 `not spec.get("containers")` 后，
+# enumerate/索引访问崩溃 → /api/check HTTP 500。守卫必须用 isinstance(list)。
+# ---------------------------------------------------------------------------
+def test_validate_pod_rejects_int_containers():
+    """containers: 5（truthy int）→ 必须拒绝，不得在 enumerate 时崩溃（R2）"""
+    state = ClusterState()
+    yaml = """
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bad-pod
+spec:
+  containers: 5
+"""
+    with pytest.raises(K8sError) as exc:
+        apply_manifest(state, yaml)
+    assert "containers" in str(exc.value)
+
+
+def test_validate_pod_rejects_dict_containers():
+    """containers: {}（truthy dict，可迭代但语义错误）→ 必须拒绝（isinstance list 覆盖）"""
+    state = ClusterState()
+    yaml = """
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bad-pod
+spec:
+  containers: {}
+"""
+    with pytest.raises(K8sError) as exc:
+        apply_manifest(state, yaml)
+    assert "containers" in str(exc.value)
+
+
+def test_validate_pod_rejects_string_containers():
+    """containers: foo（truthy str，可迭代字符但语义错误）→ 必须拒绝（isinstance list 覆盖）"""
+    state = ClusterState()
+    yaml = """
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bad-pod
+spec:
+  containers: foo
+"""
+    with pytest.raises(K8sError) as exc:
+        apply_manifest(state, yaml)
+    assert "containers" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# R1 (第 4 轮): Deployment spec.template falsy-only guard
+# truthy 非 dict（str/int）绕过 `if not template:` 后，template.setdefault 崩溃
+# → /api/check HTTP 500。守卫必须用 isinstance(dict)。
+# ---------------------------------------------------------------------------
+def test_apply_deployment_rejects_string_template():
+    """spec.template: foo（truthy str）→ 必须拒绝，不得 setdefault 崩溃（R1）"""
+    state = ClusterState()
+    yaml = """
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  template: foo
+"""
+    with pytest.raises(K8sError) as exc:
+        apply_manifest(state, yaml)
+    assert "template" in str(exc.value)
+
+
+def test_apply_deployment_rejects_int_template():
+    """spec.template: 5（truthy int）→ 必须拒绝（isinstance dict 覆盖）"""
+    state = ClusterState()
+    yaml = """
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  template: 5
+"""
+    with pytest.raises(K8sError) as exc:
+        apply_manifest(state, yaml)
+    assert "template" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# 一次性扫清：simulator 其余 falsy-only / 缺类型守卫（同类残留，防第 5 轮）
+# metadata 非 dict → .get("name") 崩溃；spec 非 dict → .get 崩溃；
+# replicas 非 int → int() 崩溃；metadata.name 含 "name" 子串绕过子串判断。
+# ---------------------------------------------------------------------------
+def test_validate_pod_rejects_string_metadata_with_name_substring():
+    """metadata: namefoo（str 含 'name' 子串）绕过子串判断 → 不得崩溃，必须 K8sError"""
+    state = ClusterState()
+    yaml = """
+apiVersion: v1
+kind: Pod
+metadata: namefoo
+spec:
+  containers:
+    - name: nginx
+      image: nginx:1.25
+"""
+    with pytest.raises(K8sError) as exc:
+        apply_manifest(state, yaml)
+    assert "metadata" in str(exc.value)
+
+
+def test_apply_deployment_rejects_non_dict_metadata():
+    """Deployment metadata: foo（str）→ .get('name') 崩溃 → 必须返回 K8sError"""
+    state = ClusterState()
+    yaml = """
+apiVersion: apps/v1
+kind: Deployment
+metadata: foo
+spec:
+  template: {}
+"""
+    with pytest.raises(K8sError) as exc:
+        apply_manifest(state, yaml)
+    assert "metadata" in str(exc.value)
+
+
+def test_apply_deployment_rejects_non_dict_spec():
+    """Deployment spec: foo（str）→ .get 崩溃 → 必须返回 K8sError"""
+    state = ClusterState()
+    yaml = """
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: d
+spec: foo
+"""
+    with pytest.raises(K8sError) as exc:
+        apply_manifest(state, yaml)
+    assert "spec" in str(exc.value)
+
+
+def test_apply_deployment_rejects_non_int_replicas():
+    """Deployment replicas: foo（str）→ int() 崩溃 → 必须返回 K8sError"""
+    state = ClusterState()
+    yaml = """
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: d
+spec:
+  replicas: foo
+  template: {}
+"""
+    with pytest.raises(K8sError) as exc:
+        apply_manifest(state, yaml)
+    assert "replicas" in str(exc.value)
+
+
+def test_apply_service_rejects_non_dict_metadata():
+    """Service metadata: foo（str）→ .get('name') 崩溃 → 必须返回 K8sError"""
+    state = ClusterState()
+    yaml = """
+apiVersion: v1
+kind: Service
+metadata: foo
+"""
+    with pytest.raises(K8sError) as exc:
+        apply_manifest(state, yaml)
+    assert "metadata" in str(exc.value)

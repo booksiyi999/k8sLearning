@@ -42,12 +42,23 @@ def apply_manifest(state: ClusterState, yaml_text: str) -> ClusterState:
 
 
 def _validate_pod(doc: dict) -> None:
-    if "metadata" not in doc or "name" not in doc.get("metadata", {}):
-        raise K8sError("Pod 缺少 metadata.name")
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict) or "name" not in metadata:
+        raise K8sError(
+            "Pod 缺少 metadata.name（metadata 必须是非空映射）"
+        )
     spec = doc.get("spec")
-    if not isinstance(spec, dict) or not spec.get("containers"):
-        raise K8sError("Pod 缺少 spec.containers")
-    for i, c in enumerate(spec["containers"]):
+    if not isinstance(spec, dict):
+        raise K8sError("Pod 缺少 spec（必须是映射）")
+    containers = spec.get("containers")
+    # 类型守卫：containers 必须是非空 list。仅用 `not spec.get("containers")`
+    # falsy-only 判断会被 truthy 非 list（int 5 / dict {} / str "foo"）绕过，
+    # 随后 enumerate(spec["containers"]) 抛 TypeError → /api/check HTTP 500。
+    if not isinstance(containers, list) or not containers:
+        raise K8sError(
+            "Pod 缺少 spec.containers（必须是非空列表）"
+        )
+    for i, c in enumerate(containers):
         if not isinstance(c, dict):
             # 类型守卫：containers 元素必须是 dict。若只做 "name" in c 子串判断，
             # 字符串如 "name-image" 会被误判为合法容器，绕过校验后在下层
@@ -65,19 +76,48 @@ def _apply_pod(state: ClusterState, doc: dict) -> None:
     state.pods[name] = doc
 
 
+def _validate_deployment(doc: dict) -> None:
+    """Deployment 前置校验：metadata / spec / replicas / template 全部类型守卫。
+
+    防止 truthy 非 dict（str/int）绕过 falsy-only guard 后在 .get / setdefault /
+    int() 处崩溃 → /api/check HTTP 500。与 _validate_pod 同类加固。
+    """
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict) or "name" not in metadata:
+        raise K8sError(
+            "Deployment 缺少 metadata.name（metadata 必须是非空映射）"
+        )
+    spec = doc.get("spec")
+    if not isinstance(spec, dict):
+        raise K8sError("Deployment 缺少 spec（必须是映射）")
+    replicas = spec.get("replicas", 1)
+    # 类型守卫：replicas 必须是 int。int("foo") 会抛 ValueError → HTTP 500。
+    if isinstance(replicas, bool) or not isinstance(replicas, int):
+        raise K8sError(
+            "Deployment spec.replicas 必须是整数"
+        )
+    template = spec.get("template")
+    # 类型守卫：template 必须是非空 dict。仅用 `if not template` falsy-only 判断
+    # 会被 truthy 非 dict（str "foo" / int 5）绕过，随后 template.setdefault(...)
+    # 抛 AttributeError → /api/check HTTP 500。
+    if not isinstance(template, dict) or not template:
+        raise K8sError(
+            "Deployment 缺少 spec.template（必须是非空映射）"
+        )
+
+
 def _apply_deployment(state: ClusterState, doc: dict) -> None:
-    name = doc.get("metadata", {}).get("name")
-    if not name:
-        raise K8sError("Deployment 缺少 metadata.name")
-    spec = doc.get("spec", {})
-    replicas = int(spec.get("replicas", 1))
-    template = spec.get("template", {})
-    if not template:
-        raise K8sError("Deployment 缺少 spec.template")
+    _validate_deployment(doc)
+    name = doc["metadata"]["name"]
+    spec = doc["spec"]
+    replicas = spec.get("replicas", 1)
+    template = spec["template"]
 
     state.deployments[name] = doc
     # 实例化 N 个虚拟 Pod
-    template.setdefault("metadata", {}).setdefault("labels", {})["pod-template-hash"] = name
+    template.setdefault("metadata", {}).setdefault("labels", {})[
+        "pod-template-hash"
+    ] = name
     for i in range(replicas):
         pod_name = f"{name}-{i:08x}"
         pod_doc = {
@@ -93,7 +133,10 @@ def _apply_deployment(state: ClusterState, doc: dict) -> None:
 
 
 def _apply_service(state: ClusterState, doc: dict) -> None:
-    name = doc.get("metadata", {}).get("name")
-    if not name:
-        raise K8sError("Service 缺少 metadata.name")
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict) or "name" not in metadata:
+        raise K8sError(
+            "Service 缺少 metadata.name（metadata 必须是非空映射）"
+        )
+    name = metadata["name"]
     state.services[name] = doc
