@@ -354,3 +354,42 @@ spec:
     result = lv.check_fn(yaml)
     assert result.ok is False
     assert "limits" in result.error
+
+
+def test_q1_4_resources_is_string_does_not_crash():
+    """resources 是字符串而非 dict → 失败但不崩溃（边界 B2）"""
+    lv = get_level("Q1.4")
+    yaml = """\
+apiVersion: v1
+kind: Pod
+metadata:
+  name: resource-pod
+spec:
+  containers:
+    - name: app
+      image: nginx:1.25
+      resources: "not-a-dict"
+"""
+    result = lv.check_fn(yaml)
+    assert result.ok is False
+    assert "resources" in result.error
+
+
+def test_q1_4_resources_is_list_does_not_crash():
+    """resources 是列表而非 dict → 失败但不崩溃（边界 B3）"""
+    lv = get_level("Q1.4")
+    yaml = """\
+apiVersion: v1
+kind: Pod
+metadata:
+  name: resource-pod
+spec:
+  containers:
+    - name: app
+      image: nginx:1.25
+      resources:
+        - "not-a-dict"
+"""
+    result = lv.check_fn(yaml)
+    assert result.ok is False
+    assert "resources" in result.error

@@ -303,11 +303,14 @@ def _check_04_resource_limits(user_yaml: str) -> CheckResult:
 
     c = containers[0]
     resources = c.get("resources")
-    if not resources:
+    if not isinstance(resources, dict):
+        # 类型守卫：resources 可能是字符串/列表等非 dict 类型，
+        # 此时 resources.get() 会抛 AttributeError 导致 /api/check 返回 500。
+        # 空值(None)同样被 isinstance 拦截，统一返回缺字段提示。
         return CheckResult(
             ok=False,
-            error="容器缺少 resources 字段（需要 requests 和 limits）",
-            hints=["resources 写在 spec.containers[0].resources 下"],
+            error="容器缺少 resources 字段（需要 requests 和 limits，且必须是字典）",
+            hints=["resources 写在 spec.containers[0].resources 下，格式为 requests/limits 字典"],
         )
 
     # 逐项校验 requests / limits 的 cpu / memory
