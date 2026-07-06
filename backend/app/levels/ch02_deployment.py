@@ -542,6 +542,191 @@ spec:
 )
 
 
+# ---------------------------------------------------------------------------
+# Q2.4 回滚
+# ---------------------------------------------------------------------------
+
+# 失败升级用的"坏 image"（不存在的版本）
+_WEB_DEPLOY_BAD = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deploy
+  labels:
+    app: web
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:9.99.99   # 故意写错的版本（模拟失败升级）
+"""
+
+# 回滚触发的 annotation（以 simulator.py 实际代码为准）
+# 注意: 是 k8s-quest/rollback, 不是调研报告里的 kubectl.quest/rollback
+_ROLLBACK_ANNOTATION = "k8s-quest/rollback"
+
+
+def _check_24_rollback(user_yaml: str) -> CheckResult:
+    """Q2.4 回滚: 模拟失败升级 → 玩家 rollback 回上一版(nginx:1.24)"""
+    state = ClusterState()
+    try:
+        state = preset_state(state, _WEB_DEPLOY_V1)           # revision 1: nginx:1.24
+        state = apply_manifest(state, _WEB_DEPLOY_BAD)        # revision 2: 失败升级 nginx:9.99.99
+        state = apply_manifest(state, user_yaml)              # 玩家触发回滚
+    except K8sError as e:
+        return CheckResult(ok=False, error=str(e), hints=[])
+
+    if "web-deploy" not in state.deployments:
+        return CheckResult(
+            ok=False,
+            error="web-deploy 不存在（回滚目标丢失）",
+            hints=[],
+        )
+
+    dep = state.deployments["web-deploy"]
+    image, err = _safe_get_image(dep)
+    if err is not None:
+        return CheckResult(ok=False, error=err, hints=["检查 spec.template.spec.containers[0].image"])
+
+    # 错误分支1: 还停在坏版本（没触发回滚）
+    if image == "nginx:9.99.99":
+        return CheckResult(
+            ok=False,
+            error="还在坏版本 nginx:9.99.99，回滚未生效",
+            hints=[
+                f'给 Deployment 加 annotation: {_ROLLBACK_ANNOTATION}: "true" 来触发回滚',
+                "annotation 写在 metadata.annotations 下",
+            ],
+        )
+
+    # 错误分支2: 回滚到了错误的版本
+    if image != "nginx:1.24":
+        return CheckResult(
+            ok=False,
+            error=f"回滚后 image 应为 nginx:1.24，实际 {image}",
+            hints=["rollback 默认回到上一个 revision（nginx:1.24）"],
+        )
+
+    # 校验所有 Pod 也回到旧版本
+    web_pods = [
+        p for p in state.pods.values()
+        if isinstance(p.get("metadata", {}).get("labels"), dict)
+        and p["metadata"]["labels"].get("pod-template-hash") == "web-deploy"
+    ]
+    bad_pods = []
+    for p in web_pods:
+        pod_img, perr = _safe_get_pod_image(p)
+        if perr is not None or pod_img != "nginx:1.24":
+            bad_pods.append(p)
+    if bad_pods:
+        return CheckResult(
+            ok=False,
+            error=f"还有 {len(bad_pods)}/{len(web_pods)} 个 Pod 未回到 nginx:1.24",
+            hints=["回滚应重建所有 Pod 的镜像"],
+        )
+
+    # 教学点：rollback 应产生新 revision 号（K8s 真实行为）
+    # 预期: rev1(1.24) → rev2(9.99.99) → rev3(1.24, 回滚产生)
+    revs = state.revisions.get("web-deploy", [])
+    if len(revs) < 3:
+        return CheckResult(
+            ok=False,
+            error=f"回滚应产生新 revision，实际历史 {len(revs)} 条（预期 ≥3）",
+            hints=["rollback 本身是一次 template 变更，会产生新 revision"],
+        )
+
+    return CheckResult(
+        ok=True, state=state,
+        hints=["回滚成功！Deployment 自带撤销，revision 历史是你的后悔药 🔙"],
+    )
+
+
+LEVEL_Q2_4 = Level(
+    id="Q2.4",
+    chapter="ch02",
+    title="回滚",
+    description="""
+# 回滚 🔙
+
+升级翻车了？别慌。Deployment 自带**版本历史**，一键回滚到上一版。
+
+## 场景
+
+你刚把 `web-deploy` 升级到一个**不存在的镜像版本**（`nginx:9.99.99`），Pod 全部起不来。现在需要**回滚**到上一个版本（`nginx:1.24`）。
+
+## 要求
+
+提交一个 `web-deploy` 的 Deployment YAML，加上回滚 annotation：
+```yaml
+metadata:
+  annotations:
+    k8s-quest/rollback: "true"
+```
+
+simulator 检测到这个 annotation，就会把 Deployment 回滚到上一个 revision。
+
+## 提示
+
+完整 YAML（只需加 annotation 触发回滚）：
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deploy
+  annotations:
+    k8s-quest/rollback: "true"   # ← 关键：触发回滚
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.24
+```
+
+> 💡 真实 K8s 用 `kubectl rollout undo deployment/web-deploy` 回滚。本质是把上一个 revision 的 template 复制回来——这本身又是一次 template 变更，会产生**新的 revision 号**（不是回到旧号）。所以 revision 号单调递增，但 template 指向旧的。
+>
+> 在 k8s-quest 里，我们用 annotation `k8s-quest/rollback: "true"` 来触发同样的行为。
+""",
+    starter_yaml="""\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deploy
+  annotations:
+    k8s-quest/rollback: "true"   # ← 加这个 annotation 触发回滚
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.24
+""",
+    check_fn=_check_24_rollback,
+)
+
+
 # ==================== Chapter 2 关卡汇总 ====================
 
-CHAPTER_2_LEVELS = [LEVEL_Q2_1, LEVEL_Q2_2, LEVEL_Q2_3]
+CHAPTER_2_LEVELS = [LEVEL_Q2_1, LEVEL_Q2_2, LEVEL_Q2_3, LEVEL_Q2_4]

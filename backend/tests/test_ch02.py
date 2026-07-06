@@ -295,3 +295,125 @@ def test_q2_3_preset_state_isolated():
     # Q2.3 的 state 里只有 web-deploy，不应有 nginx-deploy / api-deploy
     assert "nginx-deploy" not in result.state.deployments
     assert "api-deploy" not in result.state.deployments
+
+
+# ---------------- Q2.4 测试 ----------------
+
+_Q2_4_ROLLBACK = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deploy
+  annotations:
+    k8s-quest/rollback: "true"
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.24
+"""
+
+
+def test_q2_4_correct_rollback_passes():
+    """回滚 annotation → image 回到 nginx:1.24 → 通过"""
+    lv = get_level("Q2.4")
+    result = lv.check_fn(_Q2_4_ROLLBACK)
+    assert result.ok is True
+    # 所有 Pod 都应该是 nginx:1.24
+    web_pods = [p for p in result.state.pods.values()
+                if isinstance(p.get("metadata", {}).get("labels"), dict)
+                and p["metadata"]["labels"].get("pod-template-hash") == "web-deploy"]
+    assert len(web_pods) == 3
+    for p in web_pods:
+        assert p["spec"]["containers"][0]["image"] == "nginx:1.24"
+
+
+def test_q2_4_no_rollback_annotation_fails():
+    """没加回滚 annotation（重提交坏版本）→ 还停在 nginx:9.99.99 → 失败"""
+    lv = get_level("Q2.4")
+    yaml = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deploy
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:9.99.99
+"""
+    result = lv.check_fn(yaml)
+    assert result.ok is False
+    assert "nginx:9.99.99" in result.error
+
+
+def test_q2_4_wrong_target_image_fails():
+    """回滚到了错误版本（升级到 nginx:1.25 而非回滚到 1.24）→ 失败"""
+    lv = get_level("Q2.4")
+    yaml = _Q2_4_ROLLBACK.replace("image: nginx:1.24", "image: nginx:1.25")
+    # 去掉 rollback annotation（让这变成普通升级而非回滚）
+    yaml = yaml.replace('    k8s-quest/rollback: "true"\n', "")
+    result = lv.check_fn(yaml)
+    assert result.ok is False
+    assert "nginx:1.24" in result.error
+
+
+def test_q2_4_revision_history_recorded():
+    """回滚后应有 ≥3 个 revision（v1 → bad v2 → rollback v3）"""
+    lv = get_level("Q2.4")
+    result = lv.check_fn(_Q2_4_ROLLBACK)
+    assert result.ok is True
+    revs = result.state.revisions.get("web-deploy", [])
+    assert len(revs) >= 3
+    # revision 序列: 1.24 → 9.99.99 → 1.24(rollback)
+    assert revs[0]["image"] == "nginx:1.24"
+    assert revs[1]["image"] == "nginx:9.99.99"
+    assert revs[-1]["image"] == "nginx:1.24"
+
+
+def test_q2_4_rollback_wrong_name_caught():
+    """回滚 YAML 写了别的 deployment 名 → simulator 报错 → check_fn 不崩溃"""
+    lv = get_level("Q2.4")
+    yaml = _Q2_4_ROLLBACK.replace("name: web-deploy", "name: other-deploy")
+    result = lv.check_fn(yaml)
+    assert result.ok is False
+
+
+# ---------------- 关卡存在性测试（全部 4 关就绪后）----------------
+
+def test_chapter_2_has_4_levels():
+    """Chapter 2 应该有 4 个关卡"""
+    levels = list_levels(chapter="ch02")
+    assert len(levels) == 4, f"Expected 4 ch02 levels, got {len(levels)}"
+
+
+def test_all_chapter_2_levels_exist():
+    """所有 Q2.x 关卡都应该可获取"""
+    for lid in ["Q2.1", "Q2.2", "Q2.3", "Q2.4"]:
+        lv = get_level(lid)
+        assert lv is not None, f"Level {lid} should exist"
+        assert lv.chapter == "ch02"
+
+
+def test_list_levels_returns_all_chapters():
+    """list_levels() 返回 ch01 + ch02 全部 8 关"""
+    levels = list_levels()
+    assert len(levels) == 8
+    chapters = {lv["chapter"] for lv in levels}
+    assert chapters == {"ch01", "ch02"}
