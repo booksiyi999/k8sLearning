@@ -63,10 +63,22 @@ def _extract_image(doc: dict) -> str:
     """从 Deployment doc 中提取第一个容器的 image。
 
     供 revision history 记录使用。已通过 _validate_deployment 的 doc
-    保证 template.spec.containers 存在且结构合法。
+    保证 template 是非空 dict, 但 _validate_deployment 不校验
+    template.spec / containers, 因此此处仍需逐层 isinstance 守卫——
+    否则 truthy 非 dict（如 template.spec: "broken" 字符串）会绕过
+    falsy-only .get() 链, 在 .get("containers") 处抛 AttributeError
+    → apply_manifest 崩溃 → /api/check HTTP 500。
     """
-    template = doc.get("spec", {}).get("template", {})
-    containers = template.get("spec", {}).get("containers", [])
+    spec = doc.get("spec")
+    if not isinstance(spec, dict):
+        return ""
+    template = spec.get("template")
+    if not isinstance(template, dict):
+        return ""
+    tmpl_spec = template.get("spec")
+    if not isinstance(tmpl_spec, dict):
+        return ""
+    containers = tmpl_spec.get("containers", [])
     if (
         isinstance(containers, list)
         and containers
