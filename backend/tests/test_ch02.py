@@ -136,3 +136,75 @@ def test_q2_1_pod_count_matches_replicas():
     assert result.ok is True
     deploy_pods = [n for n in result.state.pods if n.startswith("nginx-deploy-")]
     assert len(deploy_pods) == 3
+
+
+# ---------------- Q2.2 测试 ----------------
+
+_Q2_2_CORRECT = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-deploy
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      containers:
+        - name: api
+          image: python:3.11-slim
+"""
+
+
+def test_q2_2_correct_answer_passes():
+    lv = get_level("Q2.2")
+    result = lv.check_fn(_Q2_2_CORRECT)
+    assert result.ok is True
+    assert "api-deploy" in result.state.deployments
+
+
+def test_q2_2_wrong_replicas_fails():
+    lv = get_level("Q2.2")
+    yaml = _Q2_2_CORRECT.replace("replicas: 5", "replicas: 3")
+    result = lv.check_fn(yaml)
+    assert result.ok is False
+    assert "replicas" in result.error
+    assert "5" in result.error
+
+
+def test_q2_2_wrong_image_fails():
+    lv = get_level("Q2.2")
+    yaml = _Q2_2_CORRECT.replace("python:3.11-slim", "python:3.12-slim")
+    result = lv.check_fn(yaml)
+    assert result.ok is False
+    assert "python:3.11-slim" in result.error
+
+
+def test_q2_2_wrong_name_fails():
+    lv = get_level("Q2.2")
+    yaml = _Q2_2_CORRECT.replace("name: api-deploy", "name: web-deploy")
+    result = lv.check_fn(yaml)
+    assert result.ok is False
+    assert "api-deploy" in result.error
+
+
+def test_q2_2_replicas_as_string_rejected_by_simulator():
+    """replicas: \"5\" 字符串 → simulator 校验拒绝 → check_fn 返回失败但不崩溃"""
+    lv = get_level("Q2.2")
+    yaml = _Q2_2_CORRECT.replace("replicas: 5", 'replicas: "5"')
+    result = lv.check_fn(yaml)
+    assert result.ok is False
+
+
+def test_q2_2_pod_count_matches_replicas():
+    """simulator 应按 replicas 实例化 5 个 Pod"""
+    lv = get_level("Q2.2")
+    result = lv.check_fn(_Q2_2_CORRECT)
+    assert result.ok is True
+    deploy_pods = [n for n in result.state.pods if n.startswith("api-deploy-")]
+    assert len(deploy_pods) == 5

@@ -231,6 +231,132 @@ spec:
 )
 
 
+# ---------------------------------------------------------------------------
+# Q2.2 扩缩容
+# ---------------------------------------------------------------------------
+
+def _check_22_scale(user_yaml: str) -> CheckResult:
+    """Q2.2 扩缩容: api-deploy, 5 replicas, python:3.11-slim"""
+    try:
+        state = ClusterState()
+        state = apply_manifest(state, user_yaml)
+    except K8sError as e:
+        return CheckResult(ok=False, error=str(e), hints=[])
+
+    if "api-deploy" not in state.deployments:
+        names = list(state.deployments.keys())
+        return CheckResult(
+            ok=False,
+            error=f"没找到 Deployment 'api-deploy'，当前: {names}",
+            hints=["Deployment 的 metadata.name 应为 api-deploy"],
+        )
+
+    dep = state.deployments["api-deploy"]
+
+    # 校验 replicas
+    replicas, err = _safe_get_replicas(dep)
+    if err is not None:
+        return CheckResult(ok=False, error=err, hints=["spec.replicas 应为整数 5"])
+    if replicas != 5:
+        return CheckResult(
+            ok=False,
+            error=f"replicas 应为 5，实际 {replicas}（水平扩展 = 改 replicas）",
+            hints=["spec.replicas: 5"],
+        )
+
+    # 校验 image
+    image, err = _safe_get_image(dep)
+    if err is not None:
+        return CheckResult(
+            ok=False, error=err,
+            hints=["image 在 spec.template.spec.containers[0].image"],
+        )
+    if image != "python:3.11-slim":
+        return CheckResult(
+            ok=False,
+            error=f"镜像应为 python:3.11-slim，实际 {image}",
+            hints=["检查 spec.template.spec.containers[0].image"],
+        )
+
+    # 校验 Pod 数量同步到 5
+    pod_count = _deploy_pod_count(state, "api-deploy")
+    if pod_count != 5:
+        return CheckResult(
+            ok=False,
+            error=f"期望 5 个 Pod，实际 {pod_count}（simulator 应按 replicas 扩容）",
+            hints=["改 replicas 后 Deployment 会自动增减 Pod"],
+        )
+
+    return CheckResult(
+        ok=True, state=state,
+        hints=["扩容完成！改 replicas 就是水平扩展 📈"],
+    )
+
+
+LEVEL_Q2_2 = Level(
+    id="Q2.2",
+    chapter="ch02",
+    title="扩缩容",
+    description="""
+# 扩缩容 📈
+
+业务流量上来了？**水平扩展**只需改一个字段：`spec.replicas`。Deployment 会自动增减 Pod 数量，这就是云原生的弹性。
+
+## 要求
+
+创建一个 API 服务的 Deployment：
+- `kind: Deployment`，名字 `api-deploy`
+- `5` 个副本
+- 镜像 `python:3.11-slim`
+
+## 提示
+
+把 Q2.1 的思路搬过来，改名字、副本数、镜像：
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-deploy
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      containers:
+        - name: api
+          image: python:3.11-slim
+```
+
+> 💡 `replicas` 是**期望状态**——你声明要几个，Deployment 控制器就拼命维持几个。改这个数字 = 扩容/缩容，无需重建 Deployment。
+""",
+    starter_yaml="""\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-deploy
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      containers:
+        - name: api
+          image: python:3.11-slim
+""",
+    check_fn=_check_22_scale,
+)
+
+
 # ==================== Chapter 2 关卡汇总 ====================
 
-CHAPTER_2_LEVELS = [LEVEL_Q2_1]
+CHAPTER_2_LEVELS = [LEVEL_Q2_1, LEVEL_Q2_2]
