@@ -208,3 +208,90 @@ def test_q2_2_pod_count_matches_replicas():
     assert result.ok is True
     deploy_pods = [n for n in result.state.pods if n.startswith("api-deploy-")]
     assert len(deploy_pods) == 5
+
+
+# ---------------- Q2.3 测试 ----------------
+
+_Q2_3_UPGRADE = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deploy
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.25
+"""
+
+
+def test_q2_3_correct_upgrade_passes():
+    """升级到 nginx:1.25 → 通过"""
+    lv = get_level("Q2.3")
+    result = lv.check_fn(_Q2_3_UPGRADE)
+    assert result.ok is True
+    # 所有 Pod 都应该是 nginx:1.25
+    web_pods = [p for p in result.state.pods.values()
+                if isinstance(p.get("metadata", {}).get("labels"), dict)
+                and p["metadata"]["labels"].get("pod-template-hash") == "web-deploy"]
+    assert len(web_pods) == 3
+    for p in web_pods:
+        assert p["spec"]["containers"][0]["image"] == "nginx:1.25"
+
+
+def test_q2_3_image_not_changed_fails():
+    """玩家没改 image（还是 nginx:1.24）→ 失败"""
+    lv = get_level("Q2.3")
+    yaml = _Q2_3_UPGRADE.replace("nginx:1.25", "nginx:1.24")
+    result = lv.check_fn(yaml)
+    assert result.ok is False
+    assert "nginx:1.24" in result.error
+
+
+def test_q2_3_wrong_new_image_fails():
+    """改成了错误的版本（nginx:1.26）→ 失败"""
+    lv = get_level("Q2.3")
+    yaml = _Q2_3_UPGRADE.replace("nginx:1.25", "nginx:1.26")
+    result = lv.check_fn(yaml)
+    assert result.ok is False
+    assert "nginx:1.25" in result.error
+
+
+def test_q2_3_wrong_deployment_name_fails():
+    """玩家新建了别的 Deployment（没更新 web-deploy）→ 失败"""
+    lv = get_level("Q2.3")
+    yaml = _Q2_3_UPGRADE.replace("name: web-deploy", "name: my-deploy")
+    result = lv.check_fn(yaml)
+    assert result.ok is False
+    # web-deploy 还停在 nginx:1.24
+    assert "nginx:1.24" in result.error or "web-deploy" in result.error
+
+
+def test_q2_3_revision_history_recorded():
+    """升级后应有 ≥2 个 revision（v1 + v2）"""
+    lv = get_level("Q2.3")
+    result = lv.check_fn(_Q2_3_UPGRADE)
+    assert result.ok is True
+    revs = result.state.revisions.get("web-deploy", [])
+    assert len(revs) >= 2
+    # 第一个 revision 是 v1 (nginx:1.24), 最后一个是升级后的
+    assert revs[0]["image"] == "nginx:1.24"
+    assert revs[-1]["image"] == "nginx:1.25"
+
+
+def test_q2_3_preset_state_isolated():
+    """每关的 preset 不应泄漏到其他关（独立 ClusterState）"""
+    lv = get_level("Q2.3")
+    result = lv.check_fn(_Q2_3_UPGRADE)
+    assert result.ok is True
+    # Q2.3 的 state 里只有 web-deploy，不应有 nginx-deploy / api-deploy
+    assert "nginx-deploy" not in result.state.deployments
+    assert "api-deploy" not in result.state.deployments
