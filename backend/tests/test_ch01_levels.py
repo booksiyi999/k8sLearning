@@ -7,8 +7,8 @@ from app.validator import get_level, list_levels, CheckResult
 
 def test_chapter_1_has_4_levels():
     """Chapter 1 应该有 4 个关卡"""
-    levels = list_levels()
-    assert len(levels) == 4, f"Expected 4 levels, got {len(levels)}"
+    levels = list_levels(chapter="ch01")
+    assert len(levels) == 4, f"Expected 4 ch01 levels, got {len(levels)}"
 
 
 def test_all_chapter_1_levels_exist():
