@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Any
+import copy
 import yaml
 
 
@@ -9,11 +10,21 @@ class K8sError(Exception):
 
 @dataclass
 class ClusterState:
-    """虚拟集群状态：存放所有 K8s 资源。"""
+    """虚拟集群状态：存放所有 K8s 资源。
+
+    revisions: deployment_name -> [revision records]
+    每个 revision record: {revision, image, replicas, doc}
+    仅在 Deployment apply 时记录, Pod/Service 操作不影响。
+    """
     pods: dict[str, dict] = field(default_factory=dict)
     deployments: dict[str, dict] = field(default_factory=dict)
     services: dict[str, dict] = field(default_factory=dict)
+    revisions: dict[str, list[dict]] = field(default_factory=dict)
 
+
+# ---------------------------------------------------------------------------
+# 内部辅助函数
+# ---------------------------------------------------------------------------
 
 def _has_circular_ref(obj, _seen=None):
     """检测 yaml.safe_load 产物是否含循环引用。
@@ -48,10 +59,91 @@ def _has_circular_ref(obj, _seen=None):
     return False
 
 
+def _extract_image(doc: dict) -> str:
+    """从 Deployment doc 中提取第一个容器的 image。
+
+    供 revision history 记录使用。已通过 _validate_deployment 的 doc
+    保证 template.spec.containers 存在且结构合法。
+    """
+    template = doc.get("spec", {}).get("template", {})
+    containers = template.get("spec", {}).get("containers", [])
+    if (
+        isinstance(containers, list)
+        and containers
+        and isinstance(containers[0], dict)
+    ):
+        return containers[0].get("image", "")
+    return ""
+
+
+def _instantiate_pods(state: ClusterState, name: str, doc: dict) -> None:
+    """为 Deployment 实例化 N 个虚拟 Pod, 替换该 Deployment 的旧 Pod。
+
+    先删除该 Deployment 之前的 Pod (按 pod-template-hash label 匹配),
+    再根据 replicas 创建新 Pod。这样 image 变更 / replica 变更 /
+    rollback 都能正确反映到 Pod 列表中。
+    """
+    # 清理旧 Pod (该 deployment 创建的)
+    old_pod_names = [
+        pn for pn, p in state.pods.items()
+        if isinstance(p.get("metadata", {}).get("labels", {}), dict)
+        and p["metadata"]["labels"].get("pod-template-hash") == name
+    ]
+    for pn in old_pod_names:
+        del state.pods[pn]
+
+    spec = doc["spec"]
+    replicas = spec.get("replicas", 1)
+    template = spec["template"]
+
+    # 确保 template.metadata.labels 存在并打上 pod-template-hash
+    template.setdefault("metadata", {}).setdefault("labels", {})[
+        "pod-template-hash"
+    ] = name
+
+    for i in range(replicas):
+        pod_name = f"{name}-{i:08x}"
+        pod_doc = {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "name": pod_name,
+                "labels": dict(template["metadata"]["labels"]),
+            },
+            "spec": template.get("spec", {"containers": []}),
+        }
+        state.pods[pod_name] = pod_doc
+
+
+def _record_revision(state: ClusterState, name: str, doc: dict) -> None:
+    """为 Deployment 记录一个新的 revision。
+
+    每次 apply (含 rollback) 都调用此函数。revision 号自动递增。
+    doc 使用深拷贝, 防止后续原地修改污染历史记录。
+    """
+    rev_list = state.revisions.setdefault(name, [])
+    new_rev_num = len(rev_list) + 1
+    rev_list.append({
+        "revision": new_rev_num,
+        "image": _extract_image(doc),
+        "replicas": doc.get("spec", {}).get("replicas", 1),
+        "doc": copy.deepcopy(doc),
+    })
+
+
+# ---------------------------------------------------------------------------
+# 公开 API: apply_manifest / preset_state / rollback_deployment
+# ---------------------------------------------------------------------------
+
 def apply_manifest(state: ClusterState, yaml_text: str) -> ClusterState:
     """把 YAML 应用到虚拟集群，返回新状态（in-place 修改）。
 
     支持的资源：Pod、Deployment、Service。
+
+    Deployment 特殊行为:
+    - 每次 apply 记录一个 revision (版本历史)
+    - 若 YAML 含 annotation ``k8s-quest/rollback: "true"``,
+      触发回滚到上一 revision 而非正常 apply
     """
     try:
         doc = yaml.safe_load(yaml_text)
@@ -80,6 +172,68 @@ def apply_manifest(state: ClusterState, yaml_text: str) -> ClusterState:
 
     return state
 
+
+def preset_state(state: ClusterState, yaml_text: str) -> ClusterState:
+    """预置集群状态：等价于 apply_manifest 但语义上表示'已存在的基线'。
+
+    供 check_fn 在应用玩家 YAML 前设置关卡前置状态 (如 Q2.3 需要预置
+    web-deploy v1)。preset 的 Deployment 同样会记录 revision history。
+    """
+    return apply_manifest(state, yaml_text)
+
+
+def rollback_deployment(
+    state: ClusterState, name: str, to_revision: int | None = None
+) -> None:
+    """回滚 Deployment 到指定 revision。
+
+    Args:
+        state: 集群状态
+        name: Deployment 名称
+        to_revision: 回滚到的 revision 编号。None 表示回滚到上一版。
+
+    Raises:
+        K8sError: Deployment 不存在、没有 revision history、
+                  指定 revision 不存在、或只有 1 个 revision 无法回滚。
+    """
+    if name not in state.revisions or not state.revisions[name]:
+        raise K8sError(
+            f"Deployment '{name}' 没有 rollout history，无法回滚"
+        )
+
+    rev_list = state.revisions[name]
+
+    if to_revision is None:
+        # 回滚到上一版
+        if len(rev_list) < 2:
+            raise K8sError(
+                f"Deployment '{name}' 只有 1 个版本，没有可回滚的上一版本"
+            )
+        target = rev_list[-2]
+    else:
+        # 回滚到指定 revision
+        target = next(
+            (r for r in rev_list if r["revision"] == to_revision), None
+        )
+        if target is None:
+            raise K8sError(
+                f"Deployment '{name}' 没有版本 {to_revision}"
+            )
+
+    # 深拷贝目标 revision 的 doc, 避免修改历史记录
+    restored_doc = copy.deepcopy(target["doc"])
+
+    # 记录 rollback 为新 revision (与真实 K8s 行为一致)
+    _record_revision(state, name, restored_doc)
+
+    # 更新 deployment 状态 + 重新实例化 Pod
+    state.deployments[name] = restored_doc
+    _instantiate_pods(state, name, restored_doc)
+
+
+# ---------------------------------------------------------------------------
+# 内部 apply 函数
+# ---------------------------------------------------------------------------
 
 def _validate_pod(doc: dict) -> None:
     metadata = doc.get("metadata")
@@ -149,27 +303,23 @@ def _validate_deployment(doc: dict) -> None:
 def _apply_deployment(state: ClusterState, doc: dict) -> None:
     _validate_deployment(doc)
     name = doc["metadata"]["name"]
-    spec = doc["spec"]
-    replicas = spec.get("replicas", 1)
-    template = spec["template"]
 
+    # 检测 rollback annotation: k8s-quest/rollback: "true"
+    # 玩家提交带此 annotation 的 YAML → 触发回滚到上一 revision
+    annotations = doc.get("metadata", {}).get("annotations", {})
+    if (
+        isinstance(annotations, dict)
+        and annotations.get("k8s-quest/rollback") == "true"
+    ):
+        rollback_deployment(state, name)
+        return
+
+    # 记录 revision history (每次 apply 都记录, 含首次)
+    _record_revision(state, name, doc)
+
+    # 存储 deployment + 实例化 Pod
     state.deployments[name] = doc
-    # 实例化 N 个虚拟 Pod
-    template.setdefault("metadata", {}).setdefault("labels", {})[
-        "pod-template-hash"
-    ] = name
-    for i in range(replicas):
-        pod_name = f"{name}-{i:08x}"
-        pod_doc = {
-            "apiVersion": "v1",
-            "kind": "Pod",
-            "metadata": {
-                "name": pod_name,
-                "labels": dict(template["metadata"]["labels"]),
-            },
-            "spec": template.get("spec", {"containers": []}),
-        }
-        state.pods[pod_name] = pod_doc
+    _instantiate_pods(state, name, doc)
 
 
 def _apply_service(state: ClusterState, doc: dict) -> None:

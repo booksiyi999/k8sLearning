@@ -337,3 +337,567 @@ spec:
     # 不应抛异常 — flat alias 是合法 YAML, 无循环
     result = apply_manifest(state, yaml)
     assert "nginx-pod" in result.pods
+
+
+# ===========================================================================
+# Chapter 2 扩展: Preset 机制 + Rollout History + Rollback
+# 这些测试验证 simulator 为 Q2.3 (滚动更新) 和 Q2.4 (回滚) 提供的基础设施。
+# ===========================================================================
+
+from app.simulator import preset_state, rollback_deployment  # noqa: E402
+
+
+# --- Preset 机制 ---
+
+def test_preset_state_creates_deployment_and_pods():
+    """preset_state 应用 YAML 后, deployment 和对应 pods 应存在"""
+    state = ClusterState()
+    yaml_text = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deploy
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.24
+"""
+    state = preset_state(state, yaml_text)
+    assert "web-deploy" in state.deployments
+    # 3 个虚拟 Pod
+    web_pods = [p for p in state.pods.values()
+                if p["metadata"]["labels"].get("app") == "web"]
+    assert len(web_pods) == 3
+
+
+def test_preset_state_then_apply_upgrade():
+    """preset v1 后 apply v2 (玩家升级), deployment 应反映新 image"""
+    state = ClusterState()
+    v1 = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deploy
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.24
+"""
+    v2 = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deploy
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.25
+"""
+    state = preset_state(state, v1)
+    state = apply_manifest(state, v2)  # 玩家提交升级
+    deploy = state.deployments["web-deploy"]
+    image = deploy["spec"]["template"]["spec"]["containers"][0]["image"]
+    assert image == "nginx:1.25"
+
+
+def test_preset_state_invalid_yaml_raises():
+    """preset_state 传入非法 YAML 应抛 K8sError"""
+    state = ClusterState()
+    with pytest.raises(K8sError):
+        preset_state(state, "this: is: not: valid: yaml: :::")
+
+
+# --- Rollout History (revisions) ---
+
+def test_revisions_empty_by_default():
+    """新 ClusterState 的 revisions 应为空 dict"""
+    state = ClusterState()
+    assert state.revisions == {}
+
+
+def test_first_deployment_apply_creates_revision_1():
+    """首次 apply Deployment 应创建 revision 1"""
+    state = ClusterState()
+    yaml_text = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deploy
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.24
+"""
+    apply_manifest(state, yaml_text)
+    assert "web-deploy" in state.revisions
+    assert len(state.revisions["web-deploy"]) == 1
+    rev = state.revisions["web-deploy"][0]
+    assert rev["revision"] == 1
+    assert rev["image"] == "nginx:1.24"
+    assert rev["replicas"] == 3
+
+
+def test_deployment_update_creates_revision_2():
+    """同一 deployment 第二次 apply (更新 image) 应创建 revision 2"""
+    state = ClusterState()
+    v1 = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deploy
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.24
+"""
+    v2 = v1.replace("nginx:1.24", "nginx:1.25")
+    apply_manifest(state, v1)
+    apply_manifest(state, v2)
+    assert len(state.revisions["web-deploy"]) == 2
+    assert state.revisions["web-deploy"][0]["image"] == "nginx:1.24"
+    assert state.revisions["web-deploy"][1]["image"] == "nginx:1.25"
+
+
+def test_rollout_history_tracks_replica_changes():
+    """replica 变更也应记录在 revision history 中"""
+    state = ClusterState()
+    v1 = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-deploy
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      containers:
+        - name: app
+          image: python:3.11-slim
+"""
+    v2 = v1.replace("replicas: 3", "replicas: 5")
+    apply_manifest(state, v1)
+    apply_manifest(state, v2)
+    assert state.revisions["api-deploy"][0]["replicas"] == 3
+    assert state.revisions["api-deploy"][1]["replicas"] == 5
+
+
+def test_revision_doc_is_deep_copy_not_reference():
+    """revision 中存储的 doc 应是深拷贝, 不应被后续 apply 原地修改"""
+    state = ClusterState()
+    v1 = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deploy
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.24
+"""
+    v2 = v1.replace("nginx:1.24", "nginx:1.25")
+    apply_manifest(state, v1)
+    rev1_doc = state.revisions["web-deploy"][0]["doc"]
+    apply_manifest(state, v2)
+    # rev1_doc 不应被第二次 apply 修改
+    img = rev1_doc["spec"]["template"]["spec"]["containers"][0]["image"]
+    assert img == "nginx:1.24"
+
+
+# --- Rollback ---
+
+def test_rollback_restores_old_image():
+    """apply v1, apply v2, rollback → deployment image 回到 v1"""
+    state = ClusterState()
+    v1 = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deploy
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.24
+"""
+    v2 = v1.replace("nginx:1.24", "nginx:broken")
+    apply_manifest(state, v1)
+    apply_manifest(state, v2)
+    rollback_deployment(state, "web-deploy")
+    deploy = state.deployments["web-deploy"]
+    image = deploy["spec"]["template"]["spec"]["containers"][0]["image"]
+    assert image == "nginx:1.24"
+
+
+def test_rollback_creates_new_revision():
+    """rollback 后, revisions 应有 3 个条目 (rollback = 新 revision)"""
+    state = ClusterState()
+    v1 = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deploy
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.24
+"""
+    v2 = v1.replace("nginx:1.24", "nginx:broken")
+    apply_manifest(state, v1)
+    apply_manifest(state, v2)
+    assert len(state.revisions["web-deploy"]) == 2
+    rollback_deployment(state, "web-deploy")
+    assert len(state.revisions["web-deploy"]) == 3
+    # 回滚后的 revision 应与 revision 1 的 image 一致
+    assert state.revisions["web-deploy"][2]["image"] == "nginx:1.24"
+
+
+def test_rollback_updates_pods_to_old_image():
+    """rollback 后, pods 的 image 应反映回滚后的版本"""
+    state = ClusterState()
+    v1 = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deploy
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.24
+"""
+    v2 = v1.replace("nginx:1.24", "nginx:1.25")
+    apply_manifest(state, v1)
+    apply_manifest(state, v2)
+    # 确认 v2 的 pods 是 1.25
+    web_pods = [p for p in state.pods.values()
+                if p["metadata"]["labels"].get("app") == "web"]
+    assert all(p["spec"]["containers"][0]["image"] == "nginx:1.25" for p in web_pods)
+    rollback_deployment(state, "web-deploy")
+    # 回滚后 pods 应是 1.24
+    web_pods = [p for p in state.pods.values()
+                if p["metadata"]["labels"].get("app") == "web"]
+    assert all(p["spec"]["containers"][0]["image"] == "nginx:1.24" for p in web_pods)
+
+
+def test_rollback_no_history_raises():
+    """只有 1 个 revision 的 deployment 无法回滚 → K8sError"""
+    state = ClusterState()
+    v1 = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deploy
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.24
+"""
+    apply_manifest(state, v1)
+    with pytest.raises(K8sError) as exc:
+        rollback_deployment(state, "web-deploy")
+    assert "回滚" in str(exc.value) or "rollback" in str(exc.value).lower()
+
+
+def test_rollback_nonexistent_deployment_raises():
+    """回滚不存在的 deployment → K8sError"""
+    state = ClusterState()
+    with pytest.raises(K8sError) as exc:
+        rollback_deployment(state, "nonexistent")
+    assert "nonexistent" in str(exc.value)
+
+
+def test_rollback_specific_revision():
+    """回滚到指定 revision (跳过上一版, 回到更早的版本)"""
+    state = ClusterState()
+    base = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deploy
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:{ver}
+"""
+    apply_manifest(state, base.format(ver="1.24"))   # rev 1
+    apply_manifest(state, base.format(ver="1.25"))   # rev 2
+    apply_manifest(state, base.format(ver="1.26"))   # rev 3
+    # 回滚到 revision 1 (nginx:1.24), 跳过 revision 2
+    rollback_deployment(state, "web-deploy", to_revision=1)
+    deploy = state.deployments["web-deploy"]
+    image = deploy["spec"]["template"]["spec"]["containers"][0]["image"]
+    assert image == "nginx:1.24"
+
+
+def test_rollback_nonexistent_revision_raises():
+    """回滚到不存在的 revision number → K8sError"""
+    state = ClusterState()
+    v1 = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deploy
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.24
+"""
+    v2 = v1.replace("nginx:1.24", "nginx:1.25")
+    apply_manifest(state, v1)
+    apply_manifest(state, v2)
+    with pytest.raises(K8sError) as exc:
+        rollback_deployment(state, "web-deploy", to_revision=99)
+    assert "99" in str(exc.value)
+
+
+# --- Rollback via annotation (apply_manifest 集成) ---
+
+def test_rollback_annotation_triggers_in_apply_manifest():
+    """玩家提交带 k8s-quest/rollback: true annotation 的 YAML → 触发回滚"""
+    state = ClusterState()
+    v1 = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deploy
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.24
+"""
+    v2 = v1.replace("nginx:1.24", "nginx:broken")
+    apply_manifest(state, v1)
+    apply_manifest(state, v2)
+
+    rollback_yaml = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deploy
+  annotations:
+    k8s-quest/rollback: "true"
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.25
+"""
+    apply_manifest(state, rollback_yaml)
+    deploy = state.deployments["web-deploy"]
+    image = deploy["spec"]["template"]["spec"]["containers"][0]["image"]
+    assert image == "nginx:1.24"  # 回滚到上一版
+
+
+def test_rollback_annotation_on_no_history_raises():
+    """带 rollback annotation 的 YAML 应用到只有 1 个 revision 的 deployment → K8sError"""
+    state = ClusterState()
+    v1 = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deploy
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.24
+"""
+    apply_manifest(state, v1)
+    rollback_yaml = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deploy
+  annotations:
+    k8s-quest/rollback: "true"
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.25
+"""
+    with pytest.raises(K8sError):
+        apply_manifest(state, rollback_yaml)
+
+
+# --- 向后兼容: Pod/Service 不受 revisions 影响 ---
+
+def test_pod_apply_does_not_create_revisions():
+    """apply Pod 不应在 revisions 中产生条目"""
+    state = ClusterState()
+    yaml_text = """\
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-pod
+spec:
+  containers:
+    - name: nginx
+      image: nginx:1.25
+"""
+    apply_manifest(state, yaml_text)
+    assert state.revisions == {}
+
+
+def test_service_apply_does_not_create_revisions():
+    """apply Service 不应在 revisions 中产生条目"""
+    state = ClusterState()
+    yaml_text = """\
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-svc
+spec:
+  selector:
+    app: web
+  ports:
+    - port: 80
+      targetPort: 8080
+"""
+    apply_manifest(state, yaml_text)
+    assert state.revisions == {}
