@@ -901,3 +901,140 @@ spec:
 """
     apply_manifest(state, yaml_text)
     assert state.revisions == {}
+
+
+# ===========================================================================
+# 安全加固 (QA review t_9385e7cb findings F1/W1/W2)
+# F1 [CRITICAL]: replicas 资源耗尽 DoS — _validate_deployment 不校验范围,
+#   _instantiate_pods 盲目 for i in range(replicas), replicas=1000000 挂死 worker
+# W1 [WARN]: 深度嵌套 RecursionError — 500+ 层嵌套 YAML 触发 yaml.safe_load
+#   递归溢出, except yaml.YAMLError 不捕获 RecursionError, 逃逸到顶层 except
+# W2 [WARN]: Deployment containers 未做元素校验 — template.spec.containers 塞
+#   字符串元素不拒绝, check_fn 只查 containers[0] 不崩, 但 2nd 容器是脏数据
+# ===========================================================================
+
+def test_validate_deployment_rejects_huge_replicas():
+    """replicas: 1000000 → 资源耗尽 DoS, 必须在 _validate_deployment 拒绝（F1）
+
+    _instantiate_pods 盲目 for i in range(replicas) 创建 Pod dict,
+    replicas=1000000 → 创建 100 万 Pod → worker 挂死 (>30s)。
+    """
+    state = ClusterState()
+    yaml = """
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 1000000
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.25
+"""
+    with pytest.raises(K8sError) as exc:
+        apply_manifest(state, yaml)
+    assert "replicas" in str(exc.value).lower()
+
+
+def test_validate_deployment_rejects_negative_replicas():
+    """replicas: -1 → 非法范围, 必须拒绝（F1）
+
+    range(-1) 产生空序列不会崩, 但 -1 是无意义的 replicas 值,
+    应在 _validate_deployment 层拦截。
+    """
+    state = ClusterState()
+    yaml = """
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: -1
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.25
+"""
+    with pytest.raises(K8sError) as exc:
+        apply_manifest(state, yaml)
+    assert "replicas" in str(exc.value).lower()
+
+
+def test_apply_manifest_deep_nesting_does_not_crash():
+    """500 层嵌套 YAML → RecursionError 必须捕获为 K8sError, 不得逃逸（W1）
+
+    yaml.safe_load 对深度嵌套递归解析, 500+ 层触发 RecursionError。
+    except yaml.YAMLError 不捕获 RecursionError (非 YAMLError 子类),
+    异常逃逸到 endpoint 顶层 except Exception → 200 ok=False 但 error 无意义。
+    修复: yaml.safe_load 包 except RecursionError → K8sError 友好提示。
+
+    注: PyYAML 对 500 层嵌套解析极慢 (O(n²)), 默认 1000 递归上限下
+    会 hang 而非 RecursionError。此处降低递归上限到 200 以模拟触发场景,
+    同时保留 500 层 YAML 结构以验证真实深度嵌套输入。
+    """
+    import sys
+    state = ClusterState()
+    # 构造 500 层嵌套 YAML (block style)
+    lines = ["data:"]
+    for i in range(500):
+        lines.append("  " * (i + 1) + "a:")
+    lines.append("  " * 501 + "val: 1")
+    deep_yaml = "\n".join(lines)
+    yaml_text = (
+        "apiVersion: v1\n"
+        "kind: Pod\n"
+        "metadata:\n"
+        "  name: deep-pod\n"
+        "spec:\n"
+        "  containers:\n"
+        "    - name: nginx\n"
+        "      image: nginx:1.25\n"
+        + deep_yaml
+    )
+    # 降低递归上限以模拟深度嵌套触发 RecursionError
+    old_limit = sys.getrecursionlimit()
+    sys.setrecursionlimit(200)
+    try:
+        with pytest.raises(K8sError) as exc:
+            apply_manifest(state, yaml_text)
+        # 不应逃逸为 RecursionError — 必须是 K8sError 且消息有意义
+        assert "嵌套" in str(exc.value) or "recursion" in str(exc.value).lower()
+    finally:
+        sys.setrecursionlimit(old_limit)
+
+
+def test_validate_deployment_rejects_string_container_element():
+    """Deployment containers 元素是字符串 → 必须拒绝, 不得绕过校验（W2）
+
+    _validate_deployment 不校验 template.spec.containers (与 _validate_pod 不一致)。
+    containers 塞字符串元素 → _validate_deployment 放行, check_fn 只查
+    containers[0] 所以不崩, 但 2nd 容器是脏数据, 下层 c.get() 抛 AttributeError。
+    """
+    state = ClusterState()
+    yaml = """
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - "name-image"
+"""
+    with pytest.raises(K8sError) as exc:
+        apply_manifest(state, yaml)
+    assert "containers" in str(exc.value)

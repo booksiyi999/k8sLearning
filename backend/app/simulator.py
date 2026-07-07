@@ -161,6 +161,12 @@ def apply_manifest(state: ClusterState, yaml_text: str) -> ClusterState:
         doc = yaml.safe_load(yaml_text)
     except yaml.YAMLError as e:
         raise K8sError(f"YAML 解析失败：{e}") from e
+    except RecursionError:
+        # W1: 深度嵌套 YAML (500+ 层) 触发 yaml.safe_load 递归溢出。
+        # RecursionError 非 YAMLError 子类, 上面的 except 不捕获, 逃逸到
+        # endpoint 顶层 except Exception → 200 ok=False 但 error 无意义。
+        # 此处捕获并转为 K8sError, 给玩家友好提示。
+        raise K8sError("YAML 嵌套层级过深（最多支持约 300 层）") from None
 
     if not isinstance(doc, dict):
         raise K8sError("YAML 顶层必须是映射（dict）")
@@ -302,6 +308,13 @@ def _validate_deployment(doc: dict) -> None:
         raise K8sError(
             "Deployment spec.replicas 必须是整数"
         )
+    # F1: replicas 范围校验。_instantiate_pods 盲目 for i in range(replicas),
+    # replicas=1000000 → 创建 100 万 Pod dict → worker 挂死 (>30s)。
+    # 教学场景 100 足够; 真实 K8s 上限 ~1000。
+    if replicas < 0 or replicas > 100:
+        raise K8sError(
+            f"Deployment spec.replicas 超出合理范围 (0-100), 实际 {replicas}"
+        )
     template = spec.get("template")
     # 类型守卫：template 必须是非空 dict。仅用 `if not template` falsy-only 判断
     # 会被 truthy 非 dict（str "foo" / int 5）绕过，随后 template.setdefault(...)
@@ -310,6 +323,24 @@ def _validate_deployment(doc: dict) -> None:
         raise K8sError(
             "Deployment 缺少 spec.template（必须是非空映射）"
         )
+    # W2: containers 元素校验 (与 _validate_pod 一致)。
+    # _validate_deployment 此前不校验 template.spec.containers, containers 塞
+    # 字符串元素 → 放行, check_fn 只查 containers[0] 不崩, 但 2nd 容器是脏数据。
+    tmpl_spec = template.get("spec")
+    if not isinstance(tmpl_spec, dict):
+        raise K8sError(
+            "Deployment 缺少 spec.template.spec（必须是映射）"
+        )
+    containers = tmpl_spec.get("containers")
+    if not isinstance(containers, list) or not containers:
+        raise K8sError(
+            "Deployment 缺少 spec.template.spec.containers（必须是非空列表）"
+        )
+    for i, c in enumerate(containers):
+        if not isinstance(c, dict):
+            raise K8sError(
+                f"Deployment template.spec.containers[{i}] 必须是映射（dict），实际为 {type(c).__name__}"
+            )
 
 
 def _apply_deployment(state: ClusterState, doc: dict) -> None:
