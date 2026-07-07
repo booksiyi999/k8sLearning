@@ -363,6 +363,38 @@ spec:
     assert "nginx:9.99.99" in result.error
 
 
+def test_q2_4_no_rollback_annotation_but_correct_image_fails():
+    """绕过修复: 直接提交 image=nginx:1.24（无 rollback annotation）→ 应回滚失败。
+
+    旧实现只校验最终 image/pods/revisions, 不校验是否用了 rollback
+    annotation。玩家不学回滚也能过关（静默 false-pass）。
+    修复后必须 ok=False, 因为 Q2.4 的教学目标是"用 annotation 触发回滚"。
+    """
+    lv = get_level("Q2.4")
+    yaml = """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deploy
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.24
+"""
+    result = lv.check_fn(yaml)
+    assert result.ok is False
+    assert "rollback" in result.error.lower() or "annotation" in result.error.lower()
+
+
 def test_q2_4_wrong_target_image_fails():
     """回滚到了错误版本（升级到 nginx:1.25 而非回滚到 1.24）→ 失败"""
     lv = get_level("Q2.4")

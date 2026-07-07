@@ -28,6 +28,7 @@ from app.simulator import (
     ClusterState,
     K8sError,
 )
+import yaml
 
 
 # ---------------------------------------------------------------------------
@@ -641,6 +642,40 @@ def _check_24_rollback(user_yaml: str) -> CheckResult:
             ok=False,
             error=f"回滚应产生新 revision，实际历史 {len(revs)} 条（预期 ≥3）",
             hints=["rollback 本身是一次 template 变更，会产生新 revision"],
+        )
+
+    # 教学目标守卫 (F2 修复): 到这里说明最终状态全对 (image==1.24 /
+    # pods==1.24 / revisions>=3), 但旧实现漏检了玩家是否真用了 rollback
+    # annotation。玩家直接提交 image: nginx:1.24 (无 annotation) 也会
+    # 产生 rev3 并走到这里 → 静默 false-pass, 教学目标被架空。
+    # 修复: 作为最后一道闸门, 验证 user_yaml 含 rollback annotation。
+    # 放在状态校验之后, 让更具体的错误消息 (还在坏版本/错误版本/Pod 未回滚)
+    # 优先返回; 仅当状态全对但没走回滚机制时才报此错。
+    # apply_manifest 已成功 (走到这里说明 YAML 合法), 但仍需 isinstance
+    # 守卫 metadata/annotations —— 它们可能是非 dict 类型 (字符串/列表/
+    # None), 直接 .get 会抛 AttributeError → /api/check HTTP 500。
+    try:
+        user_doc = yaml.safe_load(user_yaml)
+    except yaml.YAMLError:
+        # apply_manifest 已成功解析过同一 YAML, 理论不会走到这里;
+        # 防御性兜底, 避免异常冒泡到 API。
+        user_doc = None
+    user_has_rollback = False
+    if isinstance(user_doc, dict):
+        user_meta = user_doc.get("metadata")
+        if isinstance(user_meta, dict):
+            user_ann = user_meta.get("annotations")
+            if isinstance(user_ann, dict):
+                user_has_rollback = user_ann.get(_ROLLBACK_ANNOTATION) == "true"
+    if not user_has_rollback:
+        return CheckResult(
+            ok=False,
+            error=(
+                "最终状态正确, 但未通过回滚 annotation 触发回滚。"
+                "Q2.4 的教学目标是学会用 annotation 触发回滚, "
+                f"请在 metadata.annotations 下添加 {_ROLLBACK_ANNOTATION}: \"true\""
+            ),
+            hints=[f'在 metadata.annotations 下加 {_ROLLBACK_ANNOTATION}: "true"'],
         )
 
     return CheckResult(
