@@ -27,14 +27,20 @@ def _check_01_create_pv(user_yaml: str) -> CheckResult:
     if not isinstance(spec, dict):
         return CheckResult(ok=False, error="PV 缺少 spec", hints=[])
 
-    if spec.get("capacity", {}).get("storage") != "5Gi":
-        return CheckResult(ok=False, error=f"capacity.storage 应为 5Gi，实际 {spec.get('capacity', {}).get('storage')}", hints=[])
+    capacity = spec.get("capacity")
+    if not isinstance(capacity, dict):
+        return CheckResult(ok=False, error="capacity 应为映射（dict）", hints=[])
+    if capacity.get("storage") != "5Gi":
+        return CheckResult(ok=False, error=f"capacity.storage 应为 5Gi，实际 {capacity.get('storage')}", hints=[])
 
     if spec.get("accessModes") != ["ReadWriteOnce"]:
         return CheckResult(ok=False, error=f"accessModes 应为 [ReadWriteOnce]，实际 {spec.get('accessModes')}", hints=[])
 
-    if spec.get("hostPath", {}).get("path") != "/mnt/data":
-        return CheckResult(ok=False, error=f"hostPath.path 应为 /mnt/data，实际 {spec.get('hostPath', {}).get('path')}", hints=[])
+    host_path = spec.get("hostPath")
+    if not isinstance(host_path, dict):
+        return CheckResult(ok=False, error="hostPath 应为映射（dict）", hints=[])
+    if host_path.get("path") != "/mnt/data":
+        return CheckResult(ok=False, error=f"hostPath.path 应为 /mnt/data，实际 {host_path.get('path')}", hints=[])
 
     return CheckResult(ok=True, state=state, hints=["PV 创建成功！PV 是集群级存储资源"])
 
@@ -73,7 +79,13 @@ spec:
     if spec.get("accessModes") != ["ReadWriteOnce"]:
         return CheckResult(ok=False, error=f"accessModes 应为 [ReadWriteOnce]，实际 {spec.get('accessModes')}", hints=[])
 
-    if spec.get("resources", {}).get("requests", {}).get("storage") != "5Gi":
+    resources = spec.get("resources")
+    if not isinstance(resources, dict):
+        return CheckResult(ok=False, error="resources 应为映射（dict）", hints=[])
+    requests = resources.get("requests")
+    if not isinstance(requests, dict):
+        return CheckResult(ok=False, error="resources.requests 应为映射（dict）", hints=[])
+    if requests.get("storage") != "5Gi":
         return CheckResult(ok=False, error=f"resources.requests.storage 应为 5Gi", hints=[])
 
     return CheckResult(ok=True, state=state, hints=["PVC 创建成功！PVC 是对 PV 的存储申请"])
