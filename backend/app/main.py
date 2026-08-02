@@ -3,10 +3,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 import logging
+import os
 import traceback
 from pydantic import BaseModel
-from app.validator import get_level, list_levels, CheckResult
+from app.validator import get_level, list_levels, CheckResult, Lesson
 from app.metadata import get_all_meta, KNOWLEDGE_POINTS, LEVEL_XP, get_rank, get_next_rank, KNOWLEDGE_DOMAINS, CHAPTERS_META
+from app.cluster import ClusterManager
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +23,11 @@ app.add_middleware(
 
 # NOTE: StaticFiles 必须挂在所有 /api/* 路由之后，否则会作为 catch-all 把 API 请求吞掉。
 FRONTEND_DIR = Path(__file__).parent.parent.parent / "frontend"
+
+# ── 集群管理器（真实 K8s 模式可选） ──
+_DEPLOY_MODE = os.getenv("K8S_QUEST_MODE", "simulator")
+_KUBECONFIG = os.getenv("KUBECONFIG") or str(Path.home() / ".kube" / "config")
+CLUSTER_MGR = ClusterManager(kubeconfig_path=_KUBECONFIG if _DEPLOY_MODE == "cluster" else None)
 
 @app.get("/api/health")
 async def health():
@@ -214,6 +221,115 @@ async def api_generate_report(req: ReportRequest):
         "strengths": strengths,
         "recommendations": recommendations,
     }
+
+# ═══ v0.4 新增: 教学 + 集群 API ═══
+
+@app.get("/api/lesson/{level_id}")
+async def api_get_lesson(level_id: str):
+    """获取关卡教学文档。"""
+    lv = get_level(level_id)
+    if not lv:
+        return {"error": f"找不到关卡 {level_id}"}
+    if not lv.lesson:
+        return {"error": f"关卡 {level_id} 暂无教学文档", "has_lesson": False}
+    lesson = lv.lesson
+    return {
+        "has_lesson": True,
+        "level_id": lv.id,
+        "concept": lesson.concept,
+        "key_fields": lesson.key_fields,
+        "diagram": lesson.diagram,
+        "example_yaml": lesson.example_yaml,
+        "common_errors": lesson.common_errors,
+        "tips": lesson.tips,
+    }
+
+
+class DeployRequest(BaseModel):
+    level_id: str
+    user_yaml: str
+
+
+@app.post("/api/deploy")
+async def api_deploy(req: DeployRequest):
+    """部署 YAML — 双模式：模拟器 or 真实集群。"""
+    lv = get_level(req.level_id)
+    if not lv:
+        return {"ok": False, "error": f"找不到关卡 {req.level_id}"}
+
+    # 真实集群模式
+    if CLUSTER_MGR.enabled:
+        deploy_result = await CLUSTER_MGR.apply(req.user_yaml)
+        if not deploy_result["success"]:
+            return {"ok": False, "mode": "cluster", "error": deploy_result["error"]}
+        # 获取部署后的资源列表
+        resources = await CLUSTER_MGR.get_resources("all")
+        return {
+            "ok": True,
+            "mode": "cluster",
+            "deploy_output": deploy_result["output"],
+            "resources": resources,
+        }
+
+    # 模拟器模式（保持现有逻辑）
+    try:
+        result = lv.check_fn(req.user_yaml)
+        state_dict = None
+        if result.state:
+            state_dict = {
+                "pods": result.state.pods,
+                "deployments": result.state.deployments,
+                "services": result.state.services,
+            }
+        return {
+            "ok": result.ok,
+            "mode": "simulator",
+            "error": result.error,
+            "hints": result.hints,
+            "cluster_state": state_dict,
+        }
+    except Exception as e:
+        logger.error("deploy error (level=%s): %s\n%s", req.level_id, e, traceback.format_exc())
+        return {"ok": False, "mode": "simulator", "error": str(e)}
+
+
+@app.get("/api/resources")
+async def api_get_resources(resource_type: str = "all"):
+    """获取集群资源列表（仅集群模式）。"""
+    if not CLUSTER_MGR.enabled:
+        return {"mode": "simulator", "resources": [], "error": "未启用集群模式"}
+    resources = await CLUSTER_MGR.get_resources(resource_type)
+    return {"mode": "cluster", "resources": resources}
+
+
+@app.get("/api/logs/{pod_name}")
+async def api_get_logs(pod_name: str, tail: int = 50):
+    """获取 Pod 日志（仅集群模式）。"""
+    if not CLUSTER_MGR.enabled:
+        return {"mode": "simulator", "logs": "", "error": "未启用集群模式"}
+    logs = await CLUSTER_MGR.get_logs(pod_name, tail)
+    return {"mode": "cluster", "logs": logs, "pod_name": pod_name}
+
+
+class ConnectivityRequest(BaseModel):
+    service_name: str
+    port: int = 80
+
+
+@app.post("/api/test-connectivity")
+async def api_test_connectivity(req: ConnectivityRequest):
+    """测试 Service 连通性（仅集群模式）。"""
+    if not CLUSTER_MGR.enabled:
+        return {"mode": "simulator", "reachable": False, "error": "未启用集群模式"}
+    result = await CLUSTER_MGR.test_connectivity(req.service_name, req.port)
+    return {"mode": "cluster", **result}
+
+
+@app.get("/api/cluster/status")
+async def api_cluster_status():
+    """获取集群连接状态。"""
+    return CLUSTER_MGR.get_status()
+
 
 # 静态前端挂载放在最后，避免吞掉上面的 /api/* 路由。
 if FRONTEND_DIR.exists():

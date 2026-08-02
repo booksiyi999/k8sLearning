@@ -12,6 +12,17 @@ class CheckResult:
 
 
 @dataclass
+class Lesson:
+    """关卡教学文档"""
+    concept: str              # 概念讲解（Markdown）
+    key_fields: list[dict]    # 关键字段 [{name, description, required, example}]
+    diagram: str              # ASCII 图解
+    example_yaml: str         # 示例 YAML（带注释）
+    common_errors: list[str]  # 常见错误
+    tips: list[str]           # 学习建议
+
+
+@dataclass
 class Level:
     id: str
     chapter: str
@@ -19,6 +30,7 @@ class Level:
     description: str
     starter_yaml: str
     check_fn: Callable[[str], CheckResult]
+    lesson: Lesson | None = None
 
 
 def get_level(level_id: str) -> Level | None:
