@@ -116,79 +116,272 @@
             </template>
           </div>
 
-          <!-- YAML 编辑器 (带行号风格) -->
-          <div class="yaml-editor-wrap">
-            <div class="yaml-editor-header">
-              <span class="yaml-tab">📄 deployment.yaml</span>
-              <span class="yaml-hint">Tab 键插入两个空格</span>
-            </div>
-            <div class="yaml-editor-body">
-              <div class="line-numbers" x-html="lineNumbers"></div>
-              <textarea
-                x-model="userYaml"
-                @input="updateLineNumbers()"
-                @keydown.tab.prevent="insertTab($event)"
-                class="yaml-textarea"
-                spellcheck="false"
-                rows="16"
-                placeholder="在此输入你的 YAML..."></textarea>
-            </div>
+          <!-- Tab 导航 -->
+          <div class="tab-nav">
+            <button class="tab-btn" :class="{active: activeTab==='lesson'}" @click="switchTab('lesson')">📖 知识讲解</button>
+            <button class="tab-btn" :class="{active: activeTab==='practice'}" @click="switchTab('practice')">✏️ 动手练习</button>
+            <button class="tab-btn" :class="{active: activeTab==='cluster'}" @click="switchTab('cluster')" x-show="clusterMode">🔧 集群实战</button>
           </div>
 
-          <!-- 操作按钮 -->
-          <div class="action-buttons">
-            <button class="btn-run" @click="runCheck()" :disabled="running">
-              <span x-text="running ? '⏳ 检查中...' : '▶ 运行'"></span>
-            </button>
-            <button class="btn-reset" @click="resetYaml()">🔄 重置</button>
-            <button class="btn-hint" @click="showHint()" x-show="!hintShown">💡 提示</button>
-            <button class="btn-hint" @click="hintShown = false" x-show="hintShown">🙈 收起提示</button>
-          </div>
-
-          <!-- 提示区 -->
-          <template x-if="hintShown && hints.length > 0">
-            <div class="hint-box">
-              <strong>💡 樱桃的提示：</strong>
-              <ul>
-                <template x-for="hint in hints" :key="hint">
-                  <li x-text="hint"></li>
-                </template>
-              </ul>
-            </div>
-          </template>
-
-          <!-- 结果展示区 -->
-          <template x-if="result">
-            <div class="result-area" :class="{ 'result-ok': result.ok, 'result-fail': !result.ok }">
-              <div class="result-header">
-                <span class="result-icon" x-text="result.ok ? '✅' : '❌'"></span>
-                <span class="result-title" x-text="result.ok ? '通过！干得漂亮喵～' : '未通过，再试试'"></span>
+          <!-- ====== Tab 1: 知识讲解面板 ====== -->
+          <div class="lesson-panel" x-show="activeTab==='lesson'">
+            <!-- 加载中 -->
+            <template x-if="lessonLoading">
+              <div class="lesson-loading">
+                <div class="loading-spinner"></div>
+                <p>🍒 加载教学文档中...</p>
               </div>
-              <template x-if="result.error">
-                <div class="result-error">
-                  <strong>错误信息：</strong>
-                  <pre x-text="result.error"></pre>
+            </template>
+
+            <!-- 有教学文档 -->
+            <template x-if="!lessonLoading && lesson && lesson.has_lesson">
+              <div class="lesson-content">
+                <!-- 概念讲解 -->
+                <template x-if="lesson.concept">
+                  <div class="lesson-concept" x-html="renderMarkdown(lesson.concept)"></div>
+                </template>
+
+                <!-- 关键字段表格 -->
+                <template x-if="lesson.key_fields && lesson.key_fields.length > 0">
+                  <div class="lesson-fields-section">
+                    <h4>📋 关键字段</h4>
+                    <table class="lesson-fields-table">
+                      <thead>
+                        <tr>
+                          <th>字段</th>
+                          <th>说明</th>
+                          <th>示例</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <template x-for="f in lesson.key_fields" :key="f.field">
+                          <tr>
+                            <td class="field-name" x-text="f.field"></td>
+                            <td x-text="f.description"></td>
+                            <td class="field-example" x-text="f.example"></td>
+                          </tr>
+                        </template>
+                      </tbody>
+                    </table>
+                  </div>
+                </template>
+
+                <!-- ASCII 图解 -->
+                <template x-if="lesson.diagram">
+                  <div class="lesson-diagram-section">
+                    <h4>📊 图解</h4>
+                    <pre class="lesson-diagram" x-text="lesson.diagram"></pre>
+                  </div>
+                </template>
+
+                <!-- 示例 YAML -->
+                <template x-if="lesson.example_yaml">
+                  <div class="lesson-yaml-section">
+                    <h4>📝 示例 YAML</h4>
+                    <pre class="lesson-example-yaml" x-text="lesson.example_yaml"></pre>
+                  </div>
+                </template>
+
+                <!-- 常见错误 -->
+                <template x-if="lesson.common_errors && lesson.common_errors.length > 0">
+                  <div class="lesson-errors">
+                    <h4>⚠️ 常见错误</h4>
+                    <ul>
+                      <template x-for="err in lesson.common_errors" :key="err">
+                        <li x-text="err"></li>
+                      </template>
+                    </ul>
+                  </div>
+                </template>
+
+                <!-- 学习建议 -->
+                <template x-if="lesson.tips && lesson.tips.length > 0">
+                  <div class="lesson-tips">
+                    <h4>💡 学习建议</h4>
+                    <ul>
+                      <template x-for="tip in lesson.tips" :key="tip">
+                        <li x-text="tip"></li>
+                      </template>
+                    </ul>
+                  </div>
+                </template>
+              </div>
+            </template>
+
+            <!-- 没有教学文档 -->
+            <template x-if="!lessonLoading && (!lesson || !lesson.has_lesson)">
+              <div class="lesson-empty">
+                <span class="lesson-empty-icon">📭</span>
+                <p>暂无教学文档</p>
+              </div>
+            </template>
+          </div>
+
+          <!-- ====== Tab 2: 动手练习面板 ====== -->
+          <div class="practice-panel" x-show="activeTab==='practice'">
+            <!-- YAML 编辑器 (带行号风格) -->
+            <div class="yaml-editor-wrap">
+              <div class="yaml-editor-header">
+                <span class="yaml-tab">📄 deployment.yaml</span>
+                <span class="yaml-hint">Tab 键插入两个空格</span>
+              </div>
+              <div class="yaml-editor-body">
+                <div class="line-numbers" x-html="lineNumbers"></div>
+                <textarea
+                  x-model="userYaml"
+                  @input="updateLineNumbers()"
+                  @keydown.tab.prevent="insertTab($event)"
+                  class="yaml-textarea"
+                  spellcheck="false"
+                  rows="16"
+                  placeholder="在此输入你的 YAML..."></textarea>
+              </div>
+            </div>
+
+            <!-- 操作按钮 -->
+            <div class="action-buttons">
+              <button class="btn-run" @click="runCheck()" :disabled="running">
+                <span x-text="running ? '⏳ 检查中...' : '▶ 模拟器校验'"></span>
+              </button>
+              <button class="btn-deploy-cluster" @click="deployToCluster()" :disabled="running" x-show="clusterMode">
+                <span x-text="running ? '⏳ 部署中...' : '▶ 部署到集群'"></span>
+              </button>
+              <button class="btn-reset" @click="resetYaml()">🔄 重置</button>
+              <button class="btn-hint" @click="showHint()" x-show="!hintShown">💡 提示</button>
+              <button class="btn-hint" @click="hintShown = false" x-show="hintShown">🙈 收起提示</button>
+            </div>
+
+            <!-- 提示区 -->
+            <template x-if="hintShown && hints.length > 0">
+              <div class="hint-box">
+                <strong>💡 樱桃的提示：</strong>
+                <ul>
+                  <template x-for="hint in hints" :key="hint">
+                    <li x-text="hint"></li>
+                  </template>
+                </ul>
+              </div>
+            </template>
+
+            <!-- 结果展示区 -->
+            <template x-if="result">
+              <div class="result-area" :class="{ 'result-ok': result.ok, 'result-fail': !result.ok }">
+                <div class="result-header">
+                  <span class="result-icon" x-text="result.ok ? '✅' : '❌'"></span>
+                  <span class="result-title" x-text="result.ok ? '通过！干得漂亮喵～' : '未通过，再试试'"></span>
                 </div>
-              </template>
-              <template x-if="result.hints && result.hints.length > 0">
-                <div class="result-hints">
-                  <strong>提示：</strong>
-                  <ul>
-                    <template x-for="hint in result.hints" :key="hint">
-                      <li x-text="hint"></li>
+                <template x-if="result.error">
+                  <div class="result-error">
+                    <strong>错误信息：</strong>
+                    <pre x-text="result.error"></pre>
+                  </div>
+                </template>
+                <template x-if="result.hints && result.hints.length > 0">
+                  <div class="result-hints">
+                    <strong>提示：</strong>
+                    <ul>
+                      <template x-for="hint in result.hints" :key="hint">
+                        <li x-text="hint"></li>
+                      </template>
+                    </ul>
+                  </div>
+                </template>
+                <!-- 集群状态 JSON -->
+                <template x-if="result.cluster_state">
+                  <div class="cluster-state">
+                    <strong>📦 集群状态：</strong>
+                    <pre x-text="JSON.stringify(result.cluster_state, null, 2)"></pre>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </div>
+
+          <!-- ====== Tab 3: 集群实战面板 ====== -->
+          <div class="cluster-panel" x-show="activeTab==='cluster' && clusterMode">
+            <!-- 资源列表 -->
+            <div class="cluster-section">
+              <div class="cluster-section-header">
+                <h4>📦 集群资源</h4>
+                <button class="btn-refresh" @click="loadClusterResources()">🔄 刷新</button>
+              </div>
+              <template x-if="clusterResources.length > 0">
+                <table class="resource-table">
+                  <thead>
+                    <tr>
+                      <th>NAME</th>
+                      <th>READY</th>
+                      <th>STATUS</th>
+                      <th>AGE</th>
+                      <th>操作</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <template x-for="res in clusterResources" :key="res.name">
+                      <tr>
+                        <td class="res-name" x-text="res.name"></td>
+                        <td x-text="res.ready || '-'"></td>
+                        <td>
+                          <span class="res-status" :class="{'status-running': res.status === 'Running', 'status-failed': res.status === 'Failed' || res.status === 'Error'}" x-text="res.status || '-'"></span>
+                        </td>
+                        <td x-text="res.age || '-'"></td>
+                        <td>
+                          <button class="btn-view-logs" @click="loadPodLogs(res.name)" x-show="res.kind === 'pod' || res.kind === 'Pod'">📋 日志</button>
+                        </td>
+                      </tr>
                     </template>
-                  </ul>
-                </div>
+                  </tbody>
+                </table>
               </template>
-              <!-- 集群状态 JSON -->
-              <template x-if="result.cluster_state">
-                <div class="cluster-state">
-                  <strong>📦 集群状态：</strong>
-                  <pre x-text="JSON.stringify(result.cluster_state, null, 2)"></pre>
+              <template x-if="clusterResources.length === 0">
+                <div class="cluster-empty">
+                  <p>📭 暂无资源，先去"动手练习"部署吧！</p>
                 </div>
               </template>
             </div>
-          </template>
+
+            <!-- Pod 日志查看器 -->
+            <div class="cluster-section">
+              <h4>📋 Pod 日志</h4>
+              <template x-if="selectedPod">
+                <div class="log-viewer-info">
+                  <span>当前 Pod: <strong x-text="selectedPod"></strong></span>
+                  <button class="btn-clear-logs" @click="selectedPod=''; clusterLogs=''">✕ 清除</button>
+                </div>
+              </template>
+              <div class="log-viewer">
+                <template x-if="clusterLogs">
+                  <pre x-text="clusterLogs"></pre>
+                </template>
+                <template x-if="!clusterLogs">
+                  <p class="log-placeholder">选择上方 Pod 的"日志"按钮查看日志...</p>
+                </template>
+              </div>
+            </div>
+
+            <!-- Service 连通性测试 -->
+            <div class="cluster-section">
+              <h4>🔌 Service 连通性测试</h4>
+              <div class="connectivity-test">
+                <div class="connectivity-inputs">
+                  <input type="text" class="connectivity-service-input" x-model="connectivityService" placeholder="Service 名称" />
+                  <input type="number" class="connectivity-port-input" x-model.number="connectivityPort" placeholder="端口" min="1" max="65535" />
+                  <button class="btn-test-connectivity" @click="testConnectivity()">🔍 测试</button>
+                </div>
+                <template x-if="connectivityResult">
+                  <div class="connectivity-result" :class="{'result-ok': connectivityResult.reachable, 'result-fail': !connectivityResult.reachable}">
+                    <span x-text="connectivityResult.reachable ? '✅ 可达' : '❌ 不可达'"></span>
+                    <template x-if="connectivityResult.error">
+                      <span class="connectivity-error" x-text="connectivityResult.error"></span>
+                    </template>
+                    <template x-if="connectivityResult.response">
+                      <pre class="connectivity-response" x-text="connectivityResult.response"></pre>
+                    </template>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
         </article>
       </template>
 

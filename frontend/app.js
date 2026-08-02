@@ -47,6 +47,21 @@ function quest() {
     reportData: null,
     resetConfirm: { show: false },
 
+    // ── Tab 状态 ──
+    activeTab: 'practice',
+    lesson: null,
+    lessonLoading: false,
+    clusterMode: false,
+    clusterStatus: null,
+
+    // ── 集群面板状态 ──
+    clusterResources: [],
+    clusterLogs: '',
+    selectedPod: '',
+    connectivityResult: null,
+    connectivityService: '',
+    connectivityPort: 80,
+
     // ═══════════════════════════════════════════
     // 初始化
     // ═══════════════════════════════════════════
@@ -54,6 +69,7 @@ function quest() {
       await this.loadMeta();
       await this.loadLevels();
       this.loadProgress();
+      await this.checkClusterMode();
     },
 
     async loadMeta() {
@@ -87,12 +103,92 @@ function quest() {
         this.result = null;
         this.hintShown = false;
         this.hints = lv.hints || [];
+        this.lesson = null;
         this.renderedDescription = this.renderMarkdown(lv.description || '');
         this.levelStartTime = Date.now();
         this.updateLineNumbers();
       } catch (e) {
         this.showToast('加载失败: ' + e, 'error');
       }
+    },
+
+    // ═══════════════════════════════════════════
+    // Tab 切换 & 教学文档
+    // ═══════════════════════════════════════════
+    async switchTab(tab) {
+      this.activeTab = tab;
+      if (tab === 'lesson' && !this.lesson && this.currentLevel) {
+        await this.loadLesson(this.currentLevel.id);
+      }
+      if (tab === 'cluster' && this.clusterMode) {
+        await this.loadClusterResources();
+      }
+    },
+
+    async loadLesson(levelId) {
+      this.lessonLoading = true;
+      try {
+        const r = await fetch(`/api/lesson/${levelId}`);
+        this.lesson = await r.json();
+      } catch(e) { this.lesson = {has_lesson: false}; }
+      finally { this.lessonLoading = false; }
+    },
+
+    async checkClusterMode() {
+      try {
+        const r = await fetch('/api/cluster/status');
+        this.clusterStatus = await r.json();
+        this.clusterMode = this.clusterStatus.mode === 'cluster';
+      } catch(e) { this.clusterMode = false; }
+    },
+
+    async deployToCluster() {
+      if (!this.currentLevel || this.running) return;
+      this.running = true;
+      try {
+        const r = await fetch('/api/deploy', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({level_id: this.currentLevel.id, user_yaml: this.userYaml})
+        });
+        const data = await r.json();
+        if (data.mode === 'cluster') {
+          this.clusterResources = data.resources || [];
+          this.result = {ok: data.ok, error: data.error || '', hints: []};
+        } else {
+          // 回退到模拟器结果
+          this.result = {ok: data.ok, error: data.error || '', hints: data.hints || [], cluster_state: data.cluster_state};
+        }
+      } catch(e) { this.showToast('部署失败: ' + e, 'error'); }
+      finally { this.running = false; }
+    },
+
+    async loadClusterResources() {
+      try {
+        const r = await fetch('/api/resources');
+        const data = await r.json();
+        this.clusterResources = data.resources || [];
+      } catch(e) {}
+    },
+
+    async loadPodLogs(podName) {
+      this.selectedPod = podName;
+      try {
+        const r = await fetch(`/api/logs/${podName}?tail=50`);
+        const data = await r.json();
+        this.clusterLogs = data.logs || '';
+      } catch(e) { this.clusterLogs = '获取日志失败'; }
+    },
+
+    async testConnectivity() {
+      try {
+        const r = await fetch('/api/test-connectivity', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({service_name: this.connectivityService, port: this.connectivityPort})
+        });
+        this.connectivityResult = await r.json();
+      } catch(e) { this.connectivityResult = {reachable: false, error: String(e)}; }
     },
 
     // ═══════════════════════════════════════════
