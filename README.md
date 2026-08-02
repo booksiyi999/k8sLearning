@@ -10,7 +10,7 @@
 |------|------|
 | 章节数 | 6 章（Pod / Deployment / Service / ConfigMap / Storage / Scheduling） |
 | 关卡数 | 24 关（每章 4 关） |
-| 功能测试 | 189 passed, 0 failed |
+| 功能测试 | 461 passed, 0 failed (189原有 + 272 E2E/前端) |
 | QA 攻击测试 | 88 passed（2 轮，已修复发现的 bug） |
 | 后端 | FastAPI + PyYAML 模拟器 |
 | 前端 | Alpine.js 单页（游戏化已完成） |
@@ -21,7 +21,7 @@
 - 🎯 **模拟器闯关**：纯 YAML 校验，零集群成本
 - 📊 **结业报告**：知识掌握度分析、薄弱项识别、成绩评定
 - 🚀 **单进程架构**：FastAPI 同时服务 API + 前端
-- 🧪 **TDD + Loop Engineering**：189 测试 + 88 QA 攻击用例
+- 🧪 **TDD + Loop Engineering**：461 测试（含 E2E 旅程 + 前端逻辑 + QA 攻击）
 - 📦 **一键部署**：Docker / systemd / 本地开发
 
 ## 🚀 快速开始
