@@ -1,640 +1,264 @@
-/* ============================================
- * 🍒 樱桃的 K8s Quest - 前端核心逻辑
- * 游戏化学习平台: XP/等级/连击/徽章/结业报告
- * 使用 Alpine.js 响应式框架 + localStorage 持久化
- * ============================================ */
+// ═══════════════════════════════════════════════
+// 🍒 K8s Quest - 游戏化逻辑引擎 v2
+// 匹配 index.html (sibling version) 的数据结构
+// ═══════════════════════════════════════════════
 
 function quest() {
   return {
-    // ==================== 状态数据 ====================
-    levels: [],           // 所有关卡列表 (从 /api/levels 获取)
-    chapters: {},         // 章节元数据 (从 /api/meta 获取)
-    meta: null,           // 完整元数据 (ranks, knowledge_domains 等)
-    currentLevel: null,   // 当前选中的关卡详情
-    userYaml: '',         // 用户输入的 YAML
-    result: null,         // 检查结果
-    running: false,       // 是否正在检查
-    renderedDescription: '', // 渲染后的 Markdown HTML
-    lineNumbers: '1',     // YAML 编辑器行号
-    hints: [],            // 当前关卡提示
-    hintShown: false,     // 是否显示提示
-    expandedChapter: 'ch01', // 当前展开的章节
+    // ── 核心数据 ──
+    levels: [],
+    currentLevel: null,
+    userYaml: '',
+    result: null,
+    running: false,
+    renderedDescription: '',
+    meta: null,
+    chapters: {},
 
-    // 进度数据 (localStorage 持久化)
+    // ── 进度对象 (匹配 HTML 的 progress.xxx) ──
     progress: {
+      total_xp: 0,
+      streak: 0,
+      max_streak: 0,
       completed_levels: [],
       level_attempts: {},
       level_first_try: [],
       level_time_spent: {},
-      total_xp: 0,
-      streak: 0,
-      max_streak: 0,
       badges: [],
-      level_start_time: {},
-      last_visited_level: null,
-      start_time: Date.now(),
     },
 
-    // UI 状态
-    toast: { show: false, message: '', type: 'info' },
-    xpFloat: { show: false, text: '', x: 0, y: 0 },
+    // ── UI 状态 ──
+    hints: [],
+    hintShown: false,
+    expandedChapter: null,
+    lineNumbers: '1',
+    levelStartTime: null,
     rankUpAnim: false,
     badgePopAnim: null,
+
+    // ── Toast (单条) ──
+    toast: { show: false, type: 'info', message: '' },
+
+    // ── XP 浮动动画 ──
+    xpFloat: { show: false, x: 0, y: 0, text: '' },
+
+    // ── 弹窗状态 ──
     reportModal: { show: false, loading: false },
     reportData: null,
     resetConfirm: { show: false },
 
-    // 徽章定义
-    allBadges: [
-      { id: 'ch01', name: 'Pod 新手', icon: '🌱', desc: '完成第一章 Pod 基础' },
-      { id: 'ch02', name: 'Deployment 大师', icon: '🚀', desc: '完成第二章 Deployment' },
-      { id: 'ch03', name: 'Service 老司机', icon: '🔗', desc: '完成第三章 Service 网络' },
-      { id: 'ch04', name: '配置专家', icon: '⚙️', desc: '完成第四章配置管理' },
-      { id: 'ch05', name: '存储达人', icon: '💾', desc: '完成第五章存储' },
-      { id: 'ch06', name: '调度贤者', icon: '🎯', desc: '完成第六章调度' },
-      { id: 'first_try', name: '一击必杀', icon: '⭐', desc: '一次通过关卡 (无失败尝试)' },
-      { id: 'persistent', name: '百折不挠', icon: '💪', desc: '尝试3次以上才通过' },
-      { id: 'speedrun', name: '速通达人', icon: '⚡', desc: '60秒内完成关卡' },
-      { id: 'legend', name: 'K8s 传奇', icon: '👑', desc: '全部24关通关' },
-    ],
-
-    // 樱桃鼓励语 (成功时随机)
-    successMessages: [
-      '干得漂亮！🐱✨',
-      '喵～完美通过！',
-      '太强了！继续加油喵～🍒',
-      '哇！这波操作很稳喵！',
-      '樱桃为你骄傲！🌸',
-      'YAML 写得真好看喵～',
-    ],
-    // 樱桃鼓励语 (失败时随机)
-    failMessages: [
-      '差一点点喵！再试试～',
-      '别灰心，YAML 少个空格都很常见喵',
-      '樱桃相信你可以的！再试一次～',
-      '嗯...检查下缩进？K8s 的 YAML 很严格喵',
-      '没关系，错误也是学习的一部分喵！',
-    ],
-
-    // ==================== 初始化 ====================
+    // ═══════════════════════════════════════════
+    // 初始化
+    // ═══════════════════════════════════════════
     async init() {
-      this.loadProgress();   // 从 localStorage 恢复进度
-      await this.loadMeta(); // 加载元数据
-      await this.loadLevels(); // 加载关卡列表
-      // 恢复上次访问的关卡
-      const lastLevel = this.progress.last_visited_level;
-      if (lastLevel) {
-        await this.loadLevel(lastLevel);
-      } else if (this.levels.length > 0) {
-        await this.loadLevel(this.levels[0].id);
-      }
+      await this.loadMeta();
+      await this.loadLevels();
+      this.loadProgress();
     },
 
-    // ==================== API 调用 ====================
     async loadMeta() {
       try {
         const r = await fetch('/api/meta');
         this.meta = await r.json();
-        this.chapters = this.meta.chapters;
-      } catch (e) {
-        console.error('加载元数据失败:', e);
-      }
+        this.chapters = this.meta?.chapters || {};
+      } catch (e) { console.error('loadMeta:', e); }
     },
 
     async loadLevels() {
       try {
         const r = await fetch('/api/levels');
         const data = await r.json();
-        this.levels = data.levels;
-      } catch (e) {
-        console.error('加载关卡列表失败:', e);
-      }
+        this.levels = data.levels || [];
+        if (this.levels.length > 0) {
+          const first = this.levels.find(l => !this.isCompleted(l.id)) || this.levels[0];
+          await this.loadLevel(first.id);
+        }
+      } catch (e) { console.error('loadLevels:', e); }
     },
 
     async loadLevel(id) {
+      if (!this.isChapterUnlocked(this.getChapterId(id))) return;
       try {
         const r = await fetch(`/api/level/${id}`);
         const lv = await r.json();
-        if (lv.error) {
-          this.showToast(lv.error, 'error');
-          return;
-        }
+        if (lv.error) { this.showToast(lv.error, 'error'); return; }
         this.currentLevel = lv;
         this.userYaml = lv.starter_yaml || '';
         this.result = null;
         this.hintShown = false;
         this.hints = lv.hints || [];
         this.renderedDescription = this.renderMarkdown(lv.description || '');
+        this.levelStartTime = Date.now();
         this.updateLineNumbers();
-
-        // 记录关卡开始时间 (如果还没记录)
-        if (!this.progress.level_start_time[id]) {
-          this.progress.level_start_time[id] = Date.now();
-        }
-        this.progress.last_visited_level = id;
-        this.saveProgress();
       } catch (e) {
-        console.error('加载关卡失败:', e);
-        this.showToast('加载关卡失败: ' + String(e), 'error');
+        this.showToast('加载失败: ' + e, 'error');
       }
     },
 
+    // ═══════════════════════════════════════════
+    // YAML 检查
+    // ═══════════════════════════════════════════
     async runCheck() {
-      if (this.running || !this.currentLevel) return;
+      if (!this.currentLevel || this.running) return;
       this.running = true;
       this.result = null;
+      const lid = this.currentLevel.id;
+      this.progress.level_attempts[lid] = (this.progress.level_attempts[lid] || 0) + 1;
+
       try {
         const r = await fetch('/api/check', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            level_id: this.currentLevel.id,
-            user_yaml: this.userYaml,
-          }),
+          body: JSON.stringify({ level_id: lid, user_yaml: this.userYaml })
         });
         this.result = await r.json();
-        this.handleCheckResult();
+        if (this.result.ok) this.onPass(lid);
+        else this.onFail(lid);
       } catch (e) {
         this.result = { ok: false, error: String(e), hints: [] };
-        this.showToast('网络错误: ' + String(e), 'error');
+        this.onFail(lid);
       } finally {
         this.running = false;
+        this.saveProgress();
       }
     },
 
-    // ==================== 检查结果处理 (核心游戏逻辑) ====================
-    handleCheckResult() {
-      const levelId = this.currentLevel.id;
-      const wasCompleted = this.progress.completed_levels.includes(levelId);
+    onPass(lid) {
+      const wasDone = this.progress.completed_levels.includes(lid);
+      const isFirstTry = this.progress.level_attempts[lid] === 1;
+      const xp = this.currentLevel?.xp || 10;
 
-      // 记录尝试次数
-      this.progress.level_attempts[levelId] = (this.progress.level_attempts[levelId] || 0) + 1;
+      if (!wasDone) {
+        this.progress.completed_levels.push(lid);
+        this.progress.total_xp += xp;
+        // XP 浮动动画
+        this.showXpFloat(xp);
+      }
 
-      if (this.result.ok) {
-        // ==================== 成功 ====================
-        this.onLevelSuccess(levelId, wasCompleted);
+      if (isFirstTry && !this.progress.level_first_try.includes(lid)) {
+        this.progress.level_first_try.push(lid);
+      }
+
+      this.progress.streak++;
+      if (this.progress.streak > this.progress.max_streak) {
+        this.progress.max_streak = this.progress.streak;
+      }
+
+      if (this.levelStartTime) {
+        const spent = Math.floor((Date.now() - this.levelStartTime) / 1000);
+        this.progress.level_time_spent[lid] = (this.progress.level_time_spent[lid] || 0) + spent;
+      }
+
+      this.checkChapterBonus(lid);
+      this.checkBadges();
+      this.fireConfetti();
+      this.showCherryMsg();
+
+      if (wasDone) {
+        this.showToast(`✓ 再次通过！连击 x${this.progress.streak}`, 'success');
       } else {
-        // ==================== 失败 ====================
-        this.onLevelFail(levelId);
-      }
-      this.saveProgress();
-    },
-
-    // 成功处理
-    onLevelSuccess(levelId, wasCompleted) {
-      const attempts = this.progress.level_attempts[levelId];
-      const isFirstTry = attempts === 1;
-      const startTime = this.progress.level_start_time[levelId];
-      const timeSpent = startTime ? Math.round((Date.now() - startTime) / 1000) : 0;
-
-      // 记录用时
-      this.progress.level_time_spent[levelId] = timeSpent;
-
-      // 如果是首次通过
-      if (!wasCompleted) {
-        // 添加到已完成列表
-        this.progress.completed_levels.push(levelId);
-
-        // 一次通过标记
-        if (isFirstTry) {
-          this.progress.level_first_try.push(levelId);
-        }
-
-        // 增加 XP
-        const levelXp = this.currentLevel.xp || 10;
-        const oldRank = this.currentRank;
-        this.progress.total_xp += levelXp;
-
-        // 连击+1
-        this.progress.streak += 1;
-        this.progress.max_streak = Math.max(this.progress.max_streak, this.progress.streak);
-
-        // 检查称号是否升级
-        const newRank = this.computeRank(this.progress.total_xp);
-        if (newRank !== oldRank) {
-          this.rankUpAnim = true;
-          setTimeout(() => { this.rankUpAnim = false; }, 1000);
-          this.showToast('🎉 称号升级！' + newRank, 'celebrate');
-        }
-
-        // +XP 浮动动画
-        this.showXpFloat('+' + levelXp + ' XP');
-
-        // 纸屑特效
-        this.fireConfetti();
-
-        // 绿色闪光
-        const detailEl = document.querySelector('.level-detail');
-        if (detailEl) {
-          detailEl.classList.add('green-flash');
-          setTimeout(() => detailEl.classList.remove('green-flash'), 500);
-        }
-
-        // 樱桃鼓励语
-        const msg = this.successMessages[Math.floor(Math.random() * this.successMessages.length)];
-        this.showToast(msg, 'success');
-
-        // 连击>=3 特殊提示
-        if (this.progress.streak >= 3) {
-          setTimeout(() => {
-            this.showToast('🔥 连击 x' + this.progress.streak + '！势不可挡喵！', 'celebrate');
-          }, 800);
-        }
-
-        // 检查徽章
-        this.checkBadges(levelId, isFirstTry, timeSpent);
-
-        // 检查章节通关
-        this.checkChapterComplete(levelId);
-      } else {
-        // 重复通关，只给鼓励
-        this.showToast('🎉 又通过了！继续探索其他关卡吧～', 'success');
+        this.showToast(`🎉 通过！+${xp} XP · 连击 x${this.progress.streak}`, 'success');
       }
     },
 
-    // 失败处理
-    onLevelFail(levelId) {
-      // 连击归零
+    onFail(lid) {
+      if (this.progress.streak > 0) {
+        this.showToast(`💔 连击中断（最高 x${this.progress.max_streak}）`, 'error');
+      }
       this.progress.streak = 0;
-      // 红色震动效果 (CSS 类已加在 result-fail 上)
-      const msg = this.failMessages[Math.floor(Math.random() * this.failMessages.length)];
-      this.showToast(msg, 'error');
     },
 
-    // ==================== 徽章检查 ====================
-    checkBadges(levelId, isFirstTry, timeSpent) {
-      const newBadges = [];
-
-      // 章节通关徽章
-      const chapterId = this.currentLevel.chapter;
-      if (this.isChapterComplete(chapterId)) {
-        if (!this.progress.badges.includes(chapterId)) {
-          newBadges.push(chapterId);
-        }
-      }
-
-      // 一击必杀徽章
-      if (isFirstTry && !this.progress.badges.includes('first_try')) {
-        newBadges.push('first_try');
-      }
-
-      // 百折不挠徽章
-      const attempts = this.progress.level_attempts[levelId];
-      if (attempts >= 3 && !this.progress.badges.includes('persistent')) {
-        newBadges.push('persistent');
-      }
-
-      // 速通达人徽章
-      if (timeSpent > 0 && timeSpent <= 60 && !this.progress.badges.includes('speedrun')) {
-        newBadges.push('speedrun');
-      }
-
-      // K8s 传奇徽章
-      if (this.progress.completed_levels.length >= 24 && !this.progress.badges.includes('legend')) {
-        newBadges.push('legend');
-      }
-
-      // 解锁新徽章
-      for (const badgeId of newBadges) {
-        this.progress.badges.push(badgeId);
-        const badge = this.allBadges.find(b => b.id === badgeId);
-        if (badge) {
-          this.badgePopAnim = badgeId;
-          setTimeout(() => { this.badgePopAnim = null; }, 1000);
-          setTimeout(() => {
-            this.showToast('🏅 徽章解锁: ' + badge.icon + ' ' + badge.name + '！', 'celebrate');
-          }, 600);
+    // ═══════════════════════════════════════════
+    // 章节奖励
+    // ═══════════════════════════════════════════
+    checkChapterBonus(lid) {
+      const chNum = lid.match(/Q(\d+)\./)?.[1];
+      if (!chNum) return;
+      const chId = `ch0${chNum}`;
+      const chLevels = this.levels.filter(l => l.id.startsWith(`Q${chNum}.`));
+      const allDone = chLevels.every(l => this.progress.completed_levels.includes(l.id));
+      if (allDone) {
+        const key = `bonus_${chId}`;
+        if (!localStorage.getItem(key)) {
+          this.progress.total_xp += 50;
+          localStorage.setItem(key, '1');
+          this.showToast(`🏆 章节通关！${this.chapters[chId]?.icon} ${this.chapters[chId]?.title} +50 XP`, 'badge');
         }
       }
     },
 
-    // ==================== 章节通关检查 ====================
-    checkChapterComplete(levelId) {
-      const chapterId = this.currentLevel.chapter;
-      if (this.isChapterComplete(chapterId)) {
-        const ch = this.chapters[chapterId];
-        if (ch) {
-          // 章节通关奖励 XP
-          const bonusXp = (this.meta && this.meta.chapter_bonus_xp && this.meta.chapter_bonus_xp[chapterId]) || 50;
-          // 只在首次通关时给奖励 (检查是否已有该章节徽章)
-          if (!this.progress.badges.includes(chapterId)) {
-            this.progress.total_xp += bonusXp;
-            this.showXpFloat('+' + bonusXp + ' XP 章节奖励!');
+    // ═══════════════════════════════════════════
+    // 徽章系统
+    // ═══════════════════════════════════════════
+    badgeDefs: [
+      { id: 'pod_newbie', icon: '🌱', name: 'Pod 新手', desc: '完成 Ch1 全部 4 关', check: (s) => s.isChapterComplete('ch01') },
+      { id: 'deploy_master', icon: '🚀', name: 'Deployment 大师', desc: '完成 Ch2 全部 4 关', check: (s) => s.isChapterComplete('ch02') },
+      { id: 'svc_driver', icon: '🔗', name: 'Service 老司机', desc: '完成 Ch3 全部 4 关', check: (s) => s.isChapterComplete('ch03') },
+      { id: 'config_expert', icon: '⚙️', name: '配置专家', desc: '完成 Ch4 全部 4 关', check: (s) => s.isChapterComplete('ch04') },
+      { id: 'storage_pro', icon: '💾', name: '存储达人', desc: '完成 Ch5 全部 4 关', check: (s) => s.isChapterComplete('ch05') },
+      { id: 'sched_sage', icon: '🎯', name: '调度贤者', desc: '完成 Ch6 全部 4 关', check: (s) => s.isChapterComplete('ch06') },
+      { id: 'first_blood', icon: '⭐', name: '一击必杀', desc: '某关一次通过', check: (s) => s.progress.level_first_try.length > 0 },
+      { id: 'persistent', icon: '💪', name: '百折不挠', desc: '某关尝试 3 次以上才通过', check: (s) => Object.entries(s.progress.level_attempts).some(([k,v]) => v >= 3 && s.progress.completed_levels.includes(k)) },
+      { id: 'combo_master', icon: '⚡', name: '连击大师', desc: '连击达到 5', check: (s) => s.progress.max_streak >= 5 },
+      { id: 'legend', icon: '👑', name: 'K8s 传奇', desc: '全部 24 关通关', check: (s) => s.progress.completed_levels.length >= 24 },
+    ],
 
-            // 大型庆祝特效
-            this.fireConfetti(true);
+    get allBadges() { return this.badgeDefs; },
 
-            setTimeout(() => {
-              this.showToast('🎉 恭喜通关【' + ch.title + '】！获得' + this.getChapterBadgeName(chapterId) + '徽章！', 'celebrate');
-            }, 1200);
+    isBadgeUnlocked(badgeId) { return this.progress.badges.includes(badgeId); },
 
-            // 检查是否解锁了新章节
-            const nextChapter = this.getNextChapter(chapterId);
-            if (nextChapter) {
-              setTimeout(() => {
-                this.showToast('🎉 新章节已解锁: ' + this.chapters[nextChapter].icon + ' ' + this.chapters[nextChapter].title + '！', 'celebrate');
-              }, 2400);
-            }
-          }
+    checkBadges() {
+      for (const b of this.badgeDefs) {
+        if (!this.isBadgeUnlocked(b.id) && b.check(this)) {
+          this.progress.badges.push(b.id);
+          this.badgePopAnim = b.id;
+          setTimeout(() => this.badgePopAnim = null, 1000);
+          this.showToast(`🏅 徽章解锁：${b.icon} ${b.name}`, 'badge');
         }
       }
     },
 
-    getChapterBadgeName(chapterId) {
-      const badge = this.allBadges.find(b => b.id === chapterId);
-      return badge ? (badge.icon + ' ' + badge.name) : '';
-    },
-
-    // ==================== 计算属性 ====================
-    get currentRank() {
-      return this.computeRank(this.progress.total_xp);
-    },
-
-    computeRank(xp) {
-      if (!this.meta || !this.meta.ranks) return '🎓 K8s 萌新';
-      let rank = this.meta.ranks[0][1];
-      for (const item of this.meta.ranks) {
-        const threshold = item[0];
-        const name = item[1];
-        if (xp >= threshold) rank = name;
-      }
-      return rank;
-    },
-
-    get nextRank() {
-      if (!this.meta || !this.meta.ranks) return null;
-      for (const item of this.meta.ranks) {
-        const threshold = item[0];
-        const name = item[1];
-        if (this.progress.total_xp < threshold) return name;
-      }
-      return null;
-    },
-
-    get xpToNextRank() {
-      if (!this.meta || !this.meta.ranks) return 0;
-      for (const item of this.meta.ranks) {
-        const threshold = item[0];
-        if (this.progress.total_xp < threshold) return threshold - this.progress.total_xp;
-      }
-      return 0;
-    },
-
-    get xpPercent() {
-      if (!this.meta || !this.meta.ranks || this.meta.ranks.length < 2) return 0;
-      // 找到当前段位和下一段位
-      let currentThreshold = 0;
-      let nextThreshold = this.meta.ranks[this.meta.ranks.length - 1][0];
-      for (let i = 0; i < this.meta.ranks.length; i++) {
-        if (this.progress.total_xp >= this.meta.ranks[i][0]) {
-          currentThreshold = this.meta.ranks[i][0];
-          if (i + 1 < this.meta.ranks.length) {
-            nextThreshold = this.meta.ranks[i + 1][0];
-          } else {
-            // 已满级
-            return 100;
-          }
-        }
-      }
-      const range = nextThreshold - currentThreshold;
-      const current = this.progress.total_xp - currentThreshold;
-      return range > 0 ? Math.min(100, (current / range) * 100) : 100;
-    },
-
-    get xpBarLabel() {
-      if (this.nextRank) {
-        return this.progress.total_xp + ' / 距 ' + this.nextRank + ' 还需 ' + this.xpToNextRank + ' XP';
-      }
-      return this.progress.total_xp + ' XP · 已满级 👑';
-    },
-
-    get totalAttempts() {
-      return Object.values(this.progress.level_attempts).reduce((a, b) => a + b, 0);
-    },
-
-    get totalTimeSpent() {
-      return Object.values(this.progress.level_time_spent).reduce((a, b) => a + b, 0);
-    },
-
-    // ==================== 章节相关方法 ====================
-    chapterLevels(chId) {
-      // chId 格式如 "ch01", 提取数字部分匹配关卡 ID 前缀
-      const num = chId.replace('ch', '');
-      return this.levels.filter(lv => lv.id.startsWith('Q' + num + '.'));
-    },
-
-    chapterProgress(chId) {
-      const levels = this.chapterLevels(chId);
-      const completed = levels.filter(lv => this.isCompleted(lv.id)).length;
-      return completed + '/' + levels.length;
-    },
-
-    chapterProgressPercent(chId) {
-      const levels = this.chapterLevels(chId);
-      if (levels.length === 0) return 0;
-      const completed = levels.filter(lv => this.isCompleted(lv.id)).length;
-      return (completed / levels.length) * 100;
-    },
-
-    isChapterComplete(chId) {
-      const levels = this.chapterLevels(chId);
-      return levels.length > 0 && levels.every(lv => this.isCompleted(lv.id));
-    },
-
-    isChapterUnlocked(chId) {
-      // 第一章始终解锁
-      if (chId === 'ch01') return true;
-      // 前一章全部通关才解锁
-      const chapterNum = parseInt(chId.replace('ch', ''));
-      const prevChId = 'ch' + String(chapterNum - 1).padStart(2, '0');
-      return this.isChapterComplete(prevChId);
-    },
-
-    getNextChapter(chId) {
-      const num = parseInt(chId.replace('ch', ''));
-      const nextNum = num + 1;
-      if (nextNum > 6) return null;
-      return 'ch' + String(nextNum).padStart(2, '0');
-    },
-
-    toggleChapter(chId) {
-      if (this.expandedChapter === chId) {
-        this.expandedChapter = null;
-      } else {
-        this.expandedChapter = chId;
-      }
-    },
-
-    // ==================== 状态检查方法 ====================
-    isCompleted(levelId) {
-      return this.progress.completed_levels.includes(levelId);
-    },
-
-    isBadgeUnlocked(badgeId) {
-      // 特殊徽章逻辑
-      if (badgeId === 'first_try') {
-        return this.progress.badges.includes('first_try') ||
-               this.progress.level_first_try.length > 0;
-      }
-      if (badgeId === 'persistent') {
-        return this.progress.badges.includes('persistent');
-      }
-      if (badgeId === 'speedrun') {
-        return this.progress.badges.includes('speedrun');
-      }
-      if (badgeId === 'legend') {
-        return this.progress.completed_levels.length >= 24;
-      }
-      // 章节徽章
-      return this.progress.badges.includes(badgeId) ||
-             (this.chapters[badgeId] && this.isChapterComplete(badgeId));
-    },
-
-    // ==================== UI 方法 ====================
-    resetYaml() {
-      if (this.currentLevel) {
-        this.userYaml = this.currentLevel.starter_yaml || '';
-        this.result = null;
-        this.updateLineNumbers();
-      }
-    },
-
-    showHint() {
-      // 尝试获取提示: 如果有关卡自带 hints 就用，否则给通用提示
-      if (this.hints && this.hints.length > 0) {
-        this.hintShown = true;
-      } else {
-        // 通用提示
-        this.hints = ['检查 YAML 缩进是否正确 (K8s 使用空格而非 Tab)', '确认 apiVersion、kind、metadata、spec 字段是否齐全'];
-        this.hintShown = true;
-      }
-    },
-
-    updateLineNumbers() {
-      const lines = this.userYaml.split('\n').length;
-      this.lineNumbers = Array.from({ length: Math.max(lines, 1) }, (_, i) => i + 1).join('\n');
-    },
-
-    insertTab(event) {
-      // Tab 键插入两个空格 (YAML 规范)
-      const textarea = event.target;
-      const start = textarea.selectionStart;
-      const end = textarea.selectionEnd;
-      this.userYaml = this.userYaml.substring(0, start) + '  ' + this.userYaml.substring(end);
-      this.$nextTick(() => {
-        textarea.selectionStart = textarea.selectionEnd = start + 2;
-        this.updateLineNumbers();
-      });
-    },
-
-    // Markdown 渲染 (使用 marked.js)
-    renderMarkdown(md) {
-      if (typeof marked !== 'undefined' && marked.parse) {
-        return marked.parse(md);
-      }
-      // 降级: 极简渲染
-      return md
-        .split('\n')
-        .map(line => {
-          if (line.startsWith('# ')) return '<h1>' + line.slice(2) + '</h1>';
-          if (line.startsWith('## ')) return '<h2>' + line.slice(3) + '</h2>';
-          if (line.startsWith('### ')) return '<h3>' + line.slice(4) + '</h3>';
-          if (line.trim() === '') return '<br>';
-          return '<p>' + line + '</p>';
-        })
-        .join('');
-    },
-
-    // ==================== 特效方法 ====================
-    fireConfetti(big) {
+    // ═══════════════════════════════════════════
+    // 特效
+    // ═══════════════════════════════════════════
+    fireConfetti() {
       if (typeof confetti !== 'function') return;
-      if (big) {
-        // 大型庆祝: 多波纸屑
-        const duration = 3000;
-        const animationEnd = Date.now() + duration;
-        const colors = ['#ff6b9d', '#ffd700', '#4caf50', '#2196f3', '#ff9800'];
-        const frame = () => {
-          confetti({
-            particleCount: 5,
-            angle: 60,
-            spread: 70,
-            origin: { x: 0, y: 0.7 },
-            colors: colors,
-          });
-          confetti({
-            particleCount: 5,
-            angle: 120,
-            spread: 70,
-            origin: { x: 1, y: 0.7 },
-            colors: colors,
-          });
-          if (Date.now() < animationEnd) requestAnimationFrame(frame);
-        };
-        frame();
-        // 中央爆发
-        confetti({
-          particleCount: 100,
-          spread: 100,
-          origin: { y: 0.5 },
-          colors: colors,
-        });
-      } else {
-        // 普通庆祝
-        confetti({
-          particleCount: 60,
-          spread: 70,
-          origin: { y: 0.6 },
-          colors: ['#ff6b9d', '#ffd700', '#4caf50'],
-        });
-      }
+      const colors = ['#ff6b9d', '#ffd700', '#98c379', '#61afef', '#c678dd'];
+      // 左边发射
+      confetti({ particleCount: 60, spread: 70, origin: { x: 0.2, y: 0.6 }, colors });
+      // 右边发射
+      setTimeout(() => confetti({ particleCount: 60, spread: 70, origin: { x: 0.8, y: 0.6 }, colors }), 150);
+      // 中间补一波
+      setTimeout(() => confetti({ particleCount: 40, spread: 100, origin: { x: 0.5, y: 0.5 }, colors }), 300);
     },
 
-    showXpFloat(text) {
-      this.xpFloat = {
-        show: true,
-        text: text,
-        x: window.innerWidth / 2 - 50,
-        y: window.innerHeight / 2,
-      };
-      setTimeout(() => { this.xpFloat.show = false; }, 1500);
+    showCherryMsg() {
+      const msgs = [
+        '🍒 太棒了！你正在成为 K8s 高手！',
+        '🍒 漂亮！这就是 Kubernetes 的魅力！',
+        '🍒 完美！继续闯关，距离传奇越来越近！',
+        '🍒 厉害了！这个知识点你已经掌握了！',
+        '🍒 干得漂亮！YAML 写得真不错！',
+        '🍒 太强了！连 K8s 老司机都为你点赞！',
+        '🍒 答对了！你就是下一个 K8s 传奇！',
+        '🍒 稳！这种操作在生产环境也是满分！',
+      ];
+      this.showToast(msgs[Math.floor(Math.random() * msgs.length)], 'success');
     },
 
-    showToast(message, type) {
-      type = type || 'info';
-      this.toast = { show: true, message: message, type: type };
-      setTimeout(() => { this.toast.show = false; }, 3000);
+    showXpFloat(xp) {
+      this.xpFloat = { show: true, x: window.innerWidth / 2 - 30, y: window.innerHeight / 2, text: `+${xp} XP` };
+      setTimeout(() => this.xpFloat.show = false, 1500);
     },
 
-    // ==================== 时间格式化 ====================
-    formatTime(seconds) {
-      if (seconds < 60) return seconds + '秒';
-      if (seconds < 3600) return Math.floor(seconds / 60) + '分' + (seconds % 60) + '秒';
-      return Math.floor(seconds / 3600) + '时' + Math.floor((seconds % 3600) / 60) + '分';
+    showToast(message, type = 'info') {
+      this.toast = { show: true, type, message };
+      setTimeout(() => this.toast.show = false, 3500);
     },
 
-    // ==================== localStorage 持久化 ====================
-    loadProgress() {
-      try {
-        const saved = localStorage.getItem('k8s_quest_progress');
-        if (saved) {
-          const data = JSON.parse(saved);
-          // 合并保存的数据和默认值 (防止字段缺失)
-          this.progress = Object.assign({}, this.progress, data);
-        }
-      } catch (e) {
-        console.error('加载进度失败:', e);
-      }
-    },
-
-    saveProgress() {
-      try {
-        localStorage.setItem('k8s_quest_progress', JSON.stringify(this.progress));
-      } catch (e) {
-        console.error('保存进度失败:', e);
-      }
-    },
-
-    // ==================== 结业报告 ====================
+    // ═══════════════════════════════════════════
+    // 结业报告
+    // ═══════════════════════════════════════════
     async showReport() {
       this.reportModal = { show: true, loading: true };
       this.reportData = null;
@@ -648,99 +272,241 @@ function quest() {
             level_first_try: this.progress.level_first_try,
             level_time_spent: this.progress.level_time_spent,
             total_xp: this.progress.total_xp,
-          }),
+          })
         });
         this.reportData = await r.json();
       } catch (e) {
-        this.showToast('生成报告失败: ' + String(e), 'error');
+        this.showToast('报告生成失败: ' + e, 'error');
+        this.reportModal.show = false;
       } finally {
         this.reportModal.loading = false;
       }
     },
 
-    // 导出报告为 HTML 文件
     exportReport() {
       if (!this.reportData) return;
-      const html = this.generateReportHtml();
-      const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+      const r = this.reportData;
+      const domains = Object.entries(r.domain_stats || {}).map(([d, s]) =>
+        `<tr><td>${d}</td><td>${s.completed}/${s.total}</td><td>${Math.round(s.rate*100)}%</td></tr>`
+      ).join('');
+      const weaks = (r.weak_areas || []).map(w =>
+        `<li><b>${w.level_id}</b> - ${w.reason} (知识点: ${w.knowledge_points.join(', ')})</li>`
+      ).join('');
+      const recs = (r.recommendations || []).map(rec => `<li>${rec}</li>`).join('');
+      const colors = { S: '#ffd700', A: '#98c379', B: '#61afef', C: '#d19a66', D: '#e06c75' };
+      const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>K8s Quest 结业报告</title>
+<style>body{font-family:system-ui;max-width:800px;margin:40px auto;padding:20px;background:#1a1f2e;color:#e6e6e6}
+h1{color:#ff6b9d}table{width:100%;border-collapse:collapse;margin:16px 0}td,th{padding:8px;border:1px solid #2a3142}
+.grade{font-size:48px;font-weight:900;color:${colors[r.grade]||'#fff'}}.summary{display:flex;gap:20px;margin:20px 0}
+.summary div{text-align:center;padding:12px;background:#0f1419;border-radius:8px}
+</style></head><body>
+<h1>🍒 K8s Quest 结业报告</h1>
+<div class="grade">${r.grade}</div>
+<p>${r.grade_comment}</p>
+<div class="summary">
+<div><div style="font-size:24px;color:#ff6b9d">${r.completed_count}/${r.total_levels}</div>关卡完成</div>
+<div><div style="font-size:24px;color:#ffd700">${r.total_xp}</div>总 XP</div>
+<div><div style="font-size:24px;color:#98c379">${r.first_try_count}</div>一次通过</div>
+<div><div style="font-size:24px;color:#61afef">${r.rank}</div>当前称号</div>
+</div>
+<h2>📈 知识域掌握度</h2>
+<table><tr><th>知识域</th><th>完成</th><th>完成率</th></tr>${domains}</table>
+<h2>⚠️ 薄弱项</h2>
+<ul>${weaks || '<li>无</li>'}</ul>
+<h2>🎯 学习建议</h2>
+<ul>${recs || '<li>继续保持！</li>'}</ul>
+<p style="color:#8b9bb4;margin-top:40px">由 🍒 樱桃 K8s Quest 生成</p>
+</body></html>`;
+      const blob = new Blob([html], { type: 'text/html' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
-      a.href = url;
-      a.download = 'k8s-quest-report.html';
-      a.click();
+      a.href = url; a.download = 'k8s-quest-report.html'; a.click();
       URL.revokeObjectURL(url);
+      this.showToast('📥 报告已导出', 'success');
     },
 
-    generateReportHtml() {
-      const d = this.reportData;
-      const domains = Object.entries(d.domain_stats || {}).map(function(entry) {
-        var name = entry[0], s = entry[1];
-        return '<div style="margin:8px 0"><div style="display:flex;justify-content:space-between;font-size:13px"><span>' + name + '</span><span>' + s.completed + '/' + s.total + '</span></div><div style="height:8px;background:#1a1f2e;border-radius:4px;margin-top:4px"><div style="height:100%;width:' + (s.rate * 100) + '%;background:linear-gradient(90deg,#ff6b9d,#ffd700);border-radius:4px"></div></div></div>';
-      }).join('');
-
-      const weakAreas = (d.weak_areas || []).map(function(w) {
-        return '<div style="padding:8px 12px;background:rgba(244,67,54,0.1);border-radius:8px;margin:4px 0;font-size:13px"><strong>' + w.level_id + '</strong> - ' + w.reason + ' (' + w.knowledge_points.join(', ') + ')</div>';
-      }).join('');
-
-      const strengths = (d.strengths || []).map(function(s) {
-        return '<span style="background:rgba(76,175,80,0.1);color:#4caf50;padding:3px 10px;border-radius:12px;font-size:12px">' + s.level_id + '</span>';
-      }).join(' ');
-
-      const recs = (d.recommendations || []).map(function(r) {
-        return '<li style="padding:8px 12px;background:#1a1f2e;border-radius:8px;margin:4px 0;font-size:13px;color:#8b95a7;border-left:3px solid #ff6b9d">' + r + '</li>';
-      }).join('');
-
-      return '<!DOCTYPE html><html><head><meta charset="UTF-8"><title>K8s Quest 结业报告</title>' +
-        '<style>body{font-family:system-ui;background:#0f1419;color:#e6e6e6;padding:40px;max-width:700px;margin:0 auto}' +
-        'h1{color:#ff6b9d;text-align:center}h2{color:#ff6b9d;font-size:18px;margin:24px 0 12px}' +
-        '.grade{font-size:72px;font-weight:900;text-align:center}' +
-        '.grade-S{color:#ffd700}.grade-A{color:#4caf50}.grade-B{color:#2196f3}.grade-C{color:#ff9800}.grade-D{color:#f44336}' +
-        '.comment{text-align:center;color:#8b95a7;margin:8px 0 24px}</style></head><body>' +
-        '<h1>🍒 K8s Quest 结业报告</h1>' +
-        '<div class="grade grade-' + d.grade + '">' + d.grade + '</div>' +
-        '<p class="comment">' + d.grade_comment + '</p>' +
-        '<p style="text-align:center;font-size:24px;font-weight:800;color:#ff6b9d">' + d.completed_count + '/' + d.total_levels + ' 关卡完成 (' + (d.completion_rate * 100).toFixed(0) + '%)</p>' +
-        '<p style="text-align:center;color:#ffd700;font-weight:700">' + d.rank + '</p>' +
-        '<h2>📚 知识域掌握度</h2>' + domains +
-        '<h2>⚠️ 薄弱项</h2>' + (weakAreas || '<p style="color:#8b95a7">无</p>') +
-        '<h2>⭐ 优势项 (一次通过)</h2><div style="display:flex;flex-wrap:wrap;gap:6px">' + (strengths || '<p style="color:#8b95a7">无</p>') + '</div>' +
-        '<h2>💡 学习建议</h2><ul style="list-style:none;padding:0">' + (recs || '<li style="color:#8b95a7">暂无建议</li>') + '</ul>' +
-        '<p style="text-align:center;color:#5a6378;margin-top:40px">Generated by 🍒 樱桃 (Hermes Agent) · ' + new Date().toLocaleString('zh-CN') + '</p>' +
-        '</body></html>';
-    },
-
-    // ==================== 重置进度 ====================
-    confirmReset() {
-      this.resetConfirm.show = true;
-    },
+    // ═══════════════════════════════════════════
+    // 重置
+    // ═══════════════════════════════════════════
+    confirmReset() { this.resetConfirm.show = true; },
 
     doReset() {
-      this.progress = {
-        completed_levels: [],
-        level_attempts: {},
-        level_first_try: [],
-        level_time_spent: {},
-        total_xp: 0,
-        streak: 0,
-        max_streak: 0,
-        badges: [],
-        level_start_time: {},
-        last_visited_level: null,
-        start_time: Date.now(),
-      };
-      this.saveProgress();
       this.resetConfirm.show = false;
-      this.reportModal.show = false;
-      this.showToast('进度已重置，重新开始冒险吧！🍒', 'info');
-      // 重新加载第一关
-      if (this.levels.length > 0) {
-        this.loadLevel(this.levels[0].id);
+      this.progress = {
+        total_xp: 0, streak: 0, max_streak: 0,
+        completed_levels: [], level_attempts: {},
+        level_first_try: [], level_time_spent: {}, badges: [],
+      };
+      for (let i = 1; i <= 6; i++) localStorage.removeItem(`bonus_ch0${i}`);
+      this.saveProgress();
+      this.showToast('✓ 进度已重置', 'info');
+      if (this.levels.length > 0) this.loadLevel(this.levels[0].id);
+    },
+
+    resetAll() { this.confirmReset(); },
+
+    // ═══════════════════════════════════════════
+    // 进度持久化
+    // ═══════════════════════════════════════════
+    saveProgress() {
+      localStorage.setItem('k8s_quest_progress', JSON.stringify(this.progress));
+    },
+
+    loadProgress() {
+      try {
+        const saved = localStorage.getItem('k8s_quest_progress');
+        if (saved) {
+          const p = JSON.parse(saved);
+          this.progress = { ...this.progress, ...p };
+        }
+      } catch (e) { console.error('loadProgress:', e); }
+    },
+
+    // ═══════════════════════════════════════════
+    // 辅助方法
+    // ═══════════════════════════════════════════
+    resetYaml() {
+      if (this.currentLevel) {
+        this.userYaml = this.currentLevel.starter_yaml || '';
+        this.result = null;
+        this.updateLineNumbers();
       }
     },
 
-    // 顶栏 logo 点击 (滚动到顶部)
-    resetAll() {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+    showHint() { this.hintShown = true; },
+
+    getChapterId(lid) {
+      const chNum = lid.match(/Q(\d+)\./)?.[1];
+      return chNum ? `ch0${chNum}` : 'ch01';
+    },
+
+    isChapterUnlocked(chId) {
+      const chNum = chId.replace('ch0', '');
+      if (chNum === '1') return true;
+      const prevNum = parseInt(chNum) - 1;
+      const prevLevels = this.levels.filter(l => l.id.startsWith(`Q${prevNum}.`));
+      return prevLevels.length > 0 && prevLevels.every(l => this.progress.completed_levels.includes(l.id));
+    },
+
+    isChapterComplete(chId) {
+      const chNum = chId.replace('ch0', '');
+      const chLevels = this.levels.filter(l => l.id.startsWith(`Q${chNum}.`));
+      return chLevels.length > 0 && chLevels.every(l => this.progress.completed_levels.includes(l.id));
+    },
+
+    chapterProgress(chId) {
+      const chNum = chId.replace('ch0', '');
+      const chLevels = this.levels.filter(l => l.id.startsWith(`Q${chNum}.`));
+      const done = chLevels.filter(l => this.progress.completed_levels.includes(l.id)).length;
+      return `${done}/${chLevels.length}`;
+    },
+
+    chapterProgressPercent(chId) {
+      const chNum = chId.replace('ch0', '');
+      const chLevels = this.levels.filter(l => l.id.startsWith(`Q${chNum}.`));
+      if (!chLevels.length) return 0;
+      const done = chLevels.filter(l => this.progress.completed_levels.includes(l.id)).length;
+      return (done / chLevels.length) * 100;
+    },
+
+    chapterLevels(chId) {
+      const chNum = chId.replace('ch0', '');
+      return this.levels.filter(l => l.id.startsWith(`Q${chNum}.`));
+    },
+
+    toggleChapter(chId) {
+      this.expandedChapter = this.expandedChapter === chId ? null : chId;
+    },
+
+    isCompleted(lid) { return this.progress.completed_levels.includes(lid); },
+
+    // ── 计算属性 ──
+    get currentRank() {
+      if (!this.meta?.ranks) return '🎓 K8s 萌新';
+      let name = this.meta.ranks[0]?.[1] || '🎓 K8s 萌新';
+      for (const [threshold, n] of this.meta.ranks) {
+        if (this.progress.total_xp >= threshold) name = n;
+      }
+      return name;
+    },
+
+    get xpPercent() {
+      if (!this.meta?.ranks) return 0;
+      let prev = 0;
+      for (const [threshold, _] of this.meta.ranks) {
+        if (this.progress.total_xp < threshold) {
+          return Math.round(((this.progress.total_xp - prev) / (threshold - prev)) * 100);
+        }
+        prev = threshold;
+      }
+      return 100;
+    },
+
+    get xpBarLabel() {
+      if (!this.meta?.ranks) return '';
+      for (const [threshold, name] of this.meta.ranks) {
+        if (this.progress.total_xp < threshold) {
+          return `${this.progress.total_xp} / ${threshold}`;
+        }
+      }
+      return `${this.progress.total_xp} XP`;
+    },
+
+    get totalAttempts() {
+      return Object.values(this.progress.level_attempts).reduce((a, b) => a + b, 0);
+    },
+
+    get totalTimeSpent() {
+      return Object.values(this.progress.level_time_spent).reduce((a, b) => a + b, 0);
+    },
+
+    // ── 时间格式化 ──
+    formatTime(seconds) {
+      if (!seconds || seconds === 0) return '0s';
+      const m = Math.floor(seconds / 60);
+      const s = seconds % 60;
+      return m > 0 ? `${m}m ${s}s` : `${s}s`;
+    },
+
+    // ── 行号 ──
+    updateLineNumbers() {
+      const lines = (this.userYaml || '').split('\n').length;
+      this.lineNumbers = Array.from({ length: Math.max(lines, 1) }, (_, i) => i + 1).join('<br>');
+    },
+
+    insertTab(event) {
+      const textarea = event.target;
+      const start = textarea.selectionStart;
+      const end = textarea.selectionEnd;
+      this.userYaml = this.userYaml.substring(0, start) + '  ' + this.userYaml.substring(end);
+      this.$nextTick(() => {
+        textarea.selectionStart = textarea.selectionEnd = start + 2;
+      });
+      this.updateLineNumbers();
+    },
+
+    // ── Markdown 渲染 ──
+    renderMarkdown(md) {
+      if (!md) return '';
+      // 优先使用 marked.js
+      if (typeof marked !== 'undefined') {
+        try { return marked.parse(md); } catch (e) { /* fall through */ }
+      }
+      // 降级：极简 markdown
+      return md.split('\n').map(line => {
+        if (line.startsWith('# ')) return `<h1>${this.escapeHtml(line.slice(2))}</h1>`;
+        if (line.startsWith('## ')) return `<h2>${this.escapeHtml(line.slice(3))}</h2>`;
+        if (line.startsWith('### ')) return `<h3>${this.escapeHtml(line.slice(4))}</h3>`;
+        if (line.startsWith('- ') || line.startsWith('* ')) return `<p>• ${this.escapeHtml(line.slice(2))}</p>`;
+        if (line.trim() === '') return '<br>';
+        return `<p>${this.escapeHtml(line)}</p>`;
+      }).join('');
+    },
+
+    escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
     },
   };
 }
