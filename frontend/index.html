@@ -2,61 +2,415 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>🍒 樱桃的 K8s Quest</title>
   <link rel="stylesheet" href="styles.css">
+  <!-- Alpine.js: 响应式框架，无需 build -->
   <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+  <!-- marked.js: Markdown 渲染 -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <!-- canvas-confetti: 庆祝纸屑特效 -->
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
 </head>
 <body>
-<div x-data="quest()" x-init="loadLevels()">
-  <header>
-    <h1>🍒 樱桃的 K8s Quest</h1>
-    <p>从 0 到 1 玩转 Kubernetes</p>
+<!-- ============ Alpine 根组件 ============ -->
+<div x-data="quest()" x-init="init()">
+
+  <!-- ==================== 顶栏 ==================== -->
+  <header class="topbar">
+    <div class="logo" @click="resetAll()">
+      <span class="logo-icon">🍒</span>
+      <span class="logo-text">樱桃的 K8s Quest</span>
+    </div>
+
+    <!-- XP 进度条 -->
+    <div class="xp-bar-container">
+      <div class="xp-info">
+        <span class="xp-value" x-text="progress.total_xp + ' XP'"></span>
+        <span class="rank-name" x-text="currentRank" :class="{ 'rank-up': rankUpAnim }"></span>
+      </div>
+      <div class="xp-bar-track">
+        <div class="xp-bar-fill" :style="`width: ${xpPercent}%`"></div>
+        <span class="xp-bar-label" x-text="xpBarLabel"></span>
+      </div>
+    </div>
+
+    <!-- 连击计数器 -->
+    <div class="streak-counter" :class="{ 'streak-fire': progress.streak >= 3 }">
+      <span class="streak-icon" x-text="progress.streak >= 3 ? '🔥' : '⚡'"></span>
+      <span class="streak-value" x-text="'x' + progress.streak"></span>
+      <span class="streak-label">连击</span>
+      <template x-if="progress.max_streak > 0">
+        <span class="streak-max" x-text="'最高 x' + progress.max_streak"></span>
+      </template>
+    </div>
   </header>
-  <main>
-    <aside>
-      <h3>关卡列表</h3>
-      <ul>
-        <template x-for="lv in levels" :key="lv.id">
-          <li>
-            <button @click="loadLevel(lv.id)" :class="{ active: currentLevel?.id === lv.id }">
-              <span x-text="lv.id"></span> · <span x-text="lv.title"></span>
-            </button>
-          </li>
-        </template>
-      </ul>
-    </aside>
-    <section>
-      <template x-if="currentLevel">
-        <article>
-          <h2><span x-text="currentLevel.id"></span> · <span x-text="currentLevel.title"></span></h2>
-          <div class="description" x-html="renderedDescription"></div>
-          <textarea x-model="userYaml" rows="15" spellcheck="false"></textarea>
-          <div class="actions">
-            <button @click="runCheck()" :disabled="running">▶ 运行</button>
-            <button @click="resetYaml()">重置</button>
+
+  <!-- ==================== 主区域: 三栏布局 ==================== -->
+  <main class="main-grid">
+
+    <!-- ========== 左栏: 章节导航 ========== -->
+    <aside class="sidebar-left">
+      <h3 class="sidebar-title">📚 章节导航</h3>
+      <template x-for="(ch, chId) in chapters" :key="chId">
+        <div class="chapter-card"
+             :class="{ unlocked: isChapterUnlocked(chId), locked: !isChapterUnlocked(chId) }"
+             :style="`--ch-color: ${ch.color}`">
+
+          <!-- 章节头部 -->
+          <div class="chapter-header" @click="isChapterUnlocked(chId) && toggleChapter(chId)">
+            <span class="chapter-icon" x-text="ch.icon"></span>
+            <div class="chapter-info">
+              <span class="chapter-title" x-text="ch.title"></span>
+              <span class="chapter-desc" x-text="ch.description"></span>
+            </div>
+            <span class="chapter-count" x-text="chapterProgress(chId)"></span>
           </div>
-          <template x-if="result">
-            <div class="result" :class="{ ok: result.ok, fail: !result.ok }">
-              <h3 x-text="result.ok ? '✓ 通过！' : '✗ 未通过'"></h3>
-              <p x-show="result.error" x-text="result.error"></p>
+
+          <!-- 章节进度条 -->
+          <div class="chapter-progress-bar">
+            <div class="chapter-progress-fill"
+                 :style="`width: ${chapterProgressPercent(chId)}%; background: ${ch.color}`"></div>
+          </div>
+
+          <!-- 关卡圆点列表 -->
+          <div class="level-dots" x-show="expandedChapter === chId || !isChapterUnlocked(chId)">
+            <template x-for="lv in chapterLevels(chId)" :key="lv.id">
+              <div class="level-dot-row"
+                   :class="{ completed: isCompleted(lv.id), locked: !isChapterUnlocked(chId) }"
+                   @click="isChapterUnlocked(chId) && loadLevel(lv.id)">
+                <span class="level-dot"
+                      x-text="isCompleted(lv.id) ? '✓' : (!isChapterUnlocked(chId) ? '🔒' : '·')"
+                      :class="{ 'dot-done': isCompleted(lv.id), 'dot-locked': !isChapterUnlocked(chId) }"></span>
+                <span class="level-dot-title" x-text="lv.id + ' ' + lv.title"></span>
+              </div>
+            </template>
+            <template x-if="!isChapterUnlocked(chId)">
+              <p class="locked-hint">🔒 完成上一章节解锁</p>
+            </template>
+          </div>
+        </div>
+      </template>
+    </aside>
+
+    <!-- ========== 中栏: 关卡详情 ========== -->
+    <section class="content-center">
+      <template x-if="currentLevel">
+        <article class="level-detail">
+          <!-- 关卡标题 -->
+          <div class="level-header">
+            <h2>
+              <span class="level-id-badge" x-text="currentLevel.id"></span>
+              <span x-text="currentLevel.title"></span>
+            </h2>
+            <span class="level-xp-badge" x-text="'+' + currentLevel.xp + ' XP'"></span>
+          </div>
+
+          <!-- Markdown 描述 -->
+          <div class="level-description" x-html="renderedDescription"></div>
+
+          <!-- 知识点标签 -->
+          <div class="knowledge-tags">
+            <template x-for="kp in (currentLevel.knowledge_points || [])" :key="kp">
+              <span class="kp-tag" x-text="'🏷️ ' + kp"></span>
+            </template>
+          </div>
+
+          <!-- YAML 编辑器 (带行号风格) -->
+          <div class="yaml-editor-wrap">
+            <div class="yaml-editor-header">
+              <span class="yaml-tab">📄 deployment.yaml</span>
+              <span class="yaml-hint">Tab 键插入两个空格</span>
+            </div>
+            <div class="yaml-editor-body">
+              <div class="line-numbers" x-html="lineNumbers"></div>
+              <textarea
+                x-model="userYaml"
+                @input="updateLineNumbers()"
+                @keydown.tab.prevent="insertTab($event)"
+                class="yaml-textarea"
+                spellcheck="false"
+                rows="16"
+                placeholder="在此输入你的 YAML..."></textarea>
+            </div>
+          </div>
+
+          <!-- 操作按钮 -->
+          <div class="action-buttons">
+            <button class="btn-run" @click="runCheck()" :disabled="running">
+              <span x-text="running ? '⏳ 检查中...' : '▶ 运行'"></span>
+            </button>
+            <button class="btn-reset" @click="resetYaml()">🔄 重置</button>
+            <button class="btn-hint" @click="showHint()" x-show="!hintShown">💡 提示</button>
+            <button class="btn-hint" @click="hintShown = false" x-show="hintShown">🙈 收起提示</button>
+          </div>
+
+          <!-- 提示区 -->
+          <template x-if="hintShown && hints.length > 0">
+            <div class="hint-box">
+              <strong>💡 樱桃的提示：</strong>
               <ul>
-                <template x-for="hint in result.hints">
+                <template x-for="hint in hints" :key="hint">
                   <li x-text="hint"></li>
                 </template>
               </ul>
+            </div>
+          </template>
+
+          <!-- 结果展示区 -->
+          <template x-if="result">
+            <div class="result-area" :class="{ 'result-ok': result.ok, 'result-fail': !result.ok }">
+              <div class="result-header">
+                <span class="result-icon" x-text="result.ok ? '✅' : '❌'"></span>
+                <span class="result-title" x-text="result.ok ? '通过！干得漂亮喵～' : '未通过，再试试'"></span>
+              </div>
+              <template x-if="result.error">
+                <div class="result-error">
+                  <strong>错误信息：</strong>
+                  <pre x-text="result.error"></pre>
+                </div>
+              </template>
+              <template x-if="result.hints && result.hints.length > 0">
+                <div class="result-hints">
+                  <strong>提示：</strong>
+                  <ul>
+                    <template x-for="hint in result.hints" :key="hint">
+                      <li x-text="hint"></li>
+                    </template>
+                  </ul>
+                </div>
+              </template>
+              <!-- 集群状态 JSON -->
               <template x-if="result.cluster_state">
-                <pre x-text="JSON.stringify(result.cluster_state, null, 2)"></pre>
+                <div class="cluster-state">
+                  <strong>📦 集群状态：</strong>
+                  <pre x-text="JSON.stringify(result.cluster_state, null, 2)"></pre>
+                </div>
               </template>
             </div>
           </template>
         </article>
       </template>
+
+      <!-- 未选择关卡时的占位 -->
+      <template x-if="!currentLevel">
+        <div class="no-level-selected">
+          <div class="placeholder-icon">🍒</div>
+          <p>选择左侧关卡开始你的 K8s 之旅！</p>
+          <p class="placeholder-sub">从 Q1.1 开始，一步步成为 K8s 传奇 👑</p>
+        </div>
+      </template>
     </section>
+
+    <!-- ========== 右栏: 成就面板 ========== -->
+    <aside class="sidebar-right">
+      <h3 class="sidebar-title">🏆 成就面板</h3>
+
+      <!-- 徽章展示区 -->
+      <div class="badges-section">
+        <div class="badges-grid">
+          <template x-for="badge in allBadges" :key="badge.id">
+            <div class="badge-item"
+                 :class="{ unlocked: isBadgeUnlocked(badge.id), locked: !isBadgeUnlocked(badge.id), 'badge-pop': badgePopAnim === badge.id }"
+                 :title="badge.desc">
+              <span class="badge-icon" x-text="isBadgeUnlocked(badge.id) ? badge.icon : '🔒'"></span>
+              <span class="badge-name" x-text="badge.name"></span>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- 统计数据 -->
+      <div class="stats-section">
+        <h4>📊 统计</h4>
+        <div class="stat-row">
+          <span class="stat-label">通关数</span>
+          <span class="stat-value" x-text="progress.completed_levels.length + '/24'"></span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">总尝试</span>
+          <span class="stat-value" x-text="totalAttempts"></span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">最高连击</span>
+          <span class="stat-value" x-text="'x' + progress.max_streak"></span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">徽章数</span>
+          <span class="stat-value" x-text="progress.badges.length + '/' + allBadges.length"></span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">总用时</span>
+          <span class="stat-value" x-text="formatTime(totalTimeSpent)"></span>
+        </div>
+      </div>
+
+      <!-- 结业报告按钮 -->
+      <button class="btn-report" @click="showReport()">📊 查看结业报告</button>
+    </aside>
   </main>
-  <footer>
-    <p>Made by 🍒 樱桃 (Hermes Agent)</p>
+
+  <!-- ==================== 浮动提示 ==================== -->
+  <template x-if="toast.show">
+    <div class="toast" :class="'toast-' + toast.type" x-transition>
+      <span x-text="toast.message"></span>
+    </div>
+  </template>
+
+  <!-- ==================== +XP 浮动动画 ==================== -->
+  <template x-if="xpFloat.show">
+    <div class="xp-float" :class="{ 'xp-float-show': xpFloat.show }"
+         :style="`left: ${xpFloat.x}px; top: ${xpFloat.y}px`">
+      <span x-text="xpFloat.text"></span>
+    </div>
+  </template>
+
+  <!-- ==================== 结业报告 Modal ==================== -->
+  <template x-if="reportModal.show">
+    <div class="modal-overlay" @click.self="reportModal.show = false">
+      <div class="modal-content">
+        <!-- 关闭按钮 -->
+        <button class="modal-close" @click="reportModal.show = false">✕</button>
+
+        <template x-if="reportModal.loading">
+          <div class="report-loading">
+            <div class="loading-spinner"></div>
+            <p>🍒 樱桃正在生成报告...</p>
+          </div>
+        </template>
+
+        <template x-if="!reportModal.loading && reportData">
+          <div class="report-body">
+            <h2 class="report-title">🍒 K8s Quest 结业报告</h2>
+
+            <!-- 成绩评定 -->
+            <div class="report-grade-section">
+              <div class="report-grade" :class="'grade-' + reportData.grade" x-text="reportData.grade"></div>
+              <div class="grade-comment" x-text="reportData.grade_comment"></div>
+            </div>
+
+            <!-- 完成率圆环 -->
+            <div class="report-completion">
+              <svg class="completion-ring" width="120" height="120">
+                <circle cx="60" cy="60" r="52" fill="none" stroke="#2a3142" stroke-width="8"></circle>
+                <circle cx="60" cy="60" r="52" fill="none" stroke="#ff6b9d" stroke-width="8"
+                        stroke-linecap="round"
+                        :stroke-dasharray="326.7"
+                        :stroke-dashoffset="326.7 * (1 - reportData.completion_rate)"
+                        transform="rotate(-90 60 60)"></circle>
+              </svg>
+              <div class="completion-text">
+                <span class="completion-number" x-text="reportData.completed_count + '/' + reportData.total_levels"></span>
+                <span class="completion-label">关卡完成</span>
+              </div>
+            </div>
+
+            <!-- 当前称号 -->
+            <div class="report-rank">
+              <span class="rank-current" x-text="'当前称号: ' + reportData.rank"></span>
+              <template x-if="reportData.next_rank">
+                <span class="rank-next" x-text="'距离 ' + reportData.next_rank + ' 还需 ' + reportData.xp_to_next_rank + ' XP'"></span>
+              </template>
+              <template x-if="!reportData.next_rank">
+                <span class="rank-max">👑 已达成最高称号！</span>
+              </template>
+            </div>
+
+            <!-- 知识域掌握度 -->
+            <div class="report-section">
+              <h3>📚 知识域掌握度</h3>
+              <template x-for="(stats, domain) in reportData.domain_stats" :key="domain">
+                <div class="domain-bar-row">
+                  <div class="domain-bar-label">
+                    <span x-text="domain"></span>
+                    <span x-text="stats.completed + '/' + stats.total"></span>
+                  </div>
+                  <div class="domain-bar-track">
+                    <div class="domain-bar-fill" :style="`width: ${stats.rate * 100}%`"></div>
+                  </div>
+                </div>
+              </template>
+            </div>
+
+            <!-- 章节完成情况 -->
+            <div class="report-section">
+              <h3>📖 章节完成情况</h3>
+              <div class="chapter-stats-grid">
+                <template x-for="(stats, chId) in reportData.chapter_stats" :key="chId">
+                  <div class="chapter-stat-item" :style="`border-color: ${chapters[chId]?.color || '#555'}`">
+                    <span class="ch-stat-icon" x-text="stats.icon"></span>
+                    <span class="ch-stat-title" x-text="stats.title"></span>
+                    <span class="ch-stat-count" x-text="stats.completed + '/' + stats.total"></span>
+                  </div>
+                </template>
+              </div>
+            </div>
+
+            <!-- 薄弱项 -->
+            <div class="report-section" x-show="reportData.weak_areas.length > 0">
+              <h3>⚠️ 薄弱项</h3>
+              <div class="weak-areas-list">
+                <template x-for="wa in reportData.weak_areas" :key="wa.level_id">
+                  <div class="weak-area-item">
+                    <span class="weak-area-id" x-text="wa.level_id"></span>
+                    <span class="weak-area-reason" x-text="wa.reason"></span>
+                    <span class="weak-area-kp" x-text="wa.knowledge_points.join(', ')"></span>
+                  </div>
+                </template>
+              </div>
+            </div>
+
+            <!-- 优势项 -->
+            <div class="report-section" x-show="reportData.strengths.length > 0">
+              <h3>⭐ 优势项 (一次通过)</h3>
+              <div class="strengths-list">
+                <template x-for="s in reportData.strengths" :key="s.level_id">
+                  <span class="strength-item" x-text="s.level_id"></span>
+                </template>
+              </div>
+            </div>
+
+            <!-- 学习建议 -->
+            <div class="report-section" x-show="reportData.recommendations.length > 0">
+              <h3>💡 学习建议</h3>
+              <ul class="recommendations-list">
+                <template x-for="rec in reportData.recommendations" :key="rec">
+                  <li x-text="rec"></li>
+                </template>
+              </ul>
+            </div>
+
+            <!-- 操作按钮 -->
+            <div class="report-actions">
+              <button class="btn-export" @click="exportReport()">📥 导出报告</button>
+              <button class="btn-reset-progress" @click="confirmReset()">🔄 重置进度</button>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </template>
+
+  <!-- ==================== 重置确认 Modal ==================== -->
+  <template x-if="resetConfirm.show">
+    <div class="modal-overlay" @click.self="resetConfirm.show = false">
+      <div class="modal-content modal-small">
+        <h3>⚠️ 确认重置进度？</h3>
+        <p>这将清空你所有的通关记录、XP、徽章和连击记录。此操作不可撤销！</p>
+        <div class="reset-confirm-actions">
+          <button class="btn-cancel" @click="resetConfirm.show = false">取消</button>
+          <button class="btn-confirm-reset" @click="doReset()">确认重置</button>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <!-- ==================== 页脚 ==================== -->
+  <footer class="footer">
+    <p>Made by 🍒 樱桃 (Hermes Agent) · K8s Quest v0.3.0</p>
   </footer>
 </div>
+
 <script src="app.js"></script>
 </body>
 </html>
