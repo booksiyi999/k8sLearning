@@ -26,7 +26,8 @@ def get_level(level_id: str) -> Level | None:
     from app.levels.ch01_pod import CHAPTER_1_LEVELS
     from app.levels.ch02_deployment import CHAPTER_2_LEVELS
     from app.levels.ch03_service import CHAPTER_3_LEVELS
-    all_levels = CHAPTER_1_LEVELS + CHAPTER_2_LEVELS + CHAPTER_3_LEVELS
+    from app.levels.ch04_configmap import CHAPTER_4_LEVELS
+    all_levels = CHAPTER_1_LEVELS + CHAPTER_2_LEVELS + CHAPTER_3_LEVELS + CHAPTER_4_LEVELS
     for lv in all_levels:
         if lv.id == level_id:
             return lv
@@ -38,7 +39,8 @@ def list_levels(chapter: str | None = None) -> list[dict]:
     from app.levels.ch01_pod import CHAPTER_1_LEVELS
     from app.levels.ch02_deployment import CHAPTER_2_LEVELS
     from app.levels.ch03_service import CHAPTER_3_LEVELS
-    all_levels = CHAPTER_1_LEVELS + CHAPTER_2_LEVELS + CHAPTER_3_LEVELS
+    from app.levels.ch04_configmap import CHAPTER_4_LEVELS
+    all_levels = CHAPTER_1_LEVELS + CHAPTER_2_LEVELS + CHAPTER_3_LEVELS + CHAPTER_4_LEVELS
     if chapter is not None:
         all_levels = [lv for lv in all_levels if lv.chapter == chapter]
     return [{"id": lv.id, "chapter": lv.chapter, "title": lv.title} for lv in all_levels]

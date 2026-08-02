@@ -19,6 +19,8 @@ class ClusterState:
     pods: dict[str, dict] = field(default_factory=dict)
     deployments: dict[str, dict] = field(default_factory=dict)
     services: dict[str, dict] = field(default_factory=dict)
+    configmaps: dict[str, dict] = field(default_factory=dict)
+    secrets: dict[str, dict] = field(default_factory=dict)
     revisions: dict[str, list[dict]] = field(default_factory=dict)
 
 
@@ -182,8 +184,12 @@ def apply_manifest(state: ClusterState, yaml_text: str) -> ClusterState:
             _apply_deployment(state, doc)
         elif kind == "Service":
             _apply_service(state, doc)
+        elif kind == "ConfigMap":
+            _apply_configmap(state, doc)
+        elif kind == "Secret":
+            _apply_secret(state, doc)
         else:
-            raise K8sError(f"不支持的资源类型：{kind}（MVP 仅支持 Pod / Deployment / Service）")
+            raise K8sError(f"不支持的资源类型：{kind}（支持 Pod / Deployment / Service / ConfigMap / Secret）")
 
     return state
 
@@ -481,3 +487,19 @@ def resolve_dns(state: ClusterState, svc_name: str, namespace: str = "default") 
 
     # ClusterIP
     return {"type": "ClusterIP", "ip": cluster_ip}
+
+
+def _apply_configmap(state: ClusterState, doc: dict) -> None:
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict) or "name" not in metadata:
+        raise K8sError("ConfigMap 缺少 metadata.name")
+    name = metadata["name"]
+    state.configmaps[name] = doc
+
+
+def _apply_secret(state: ClusterState, doc: dict) -> None:
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict) or "name" not in metadata:
+        raise K8sError("Secret 缺少 metadata.name")
+    name = metadata["name"]
+    state.secrets[name] = doc
