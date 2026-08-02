@@ -21,6 +21,9 @@ class ClusterState:
     services: dict[str, dict] = field(default_factory=dict)
     configmaps: dict[str, dict] = field(default_factory=dict)
     secrets: dict[str, dict] = field(default_factory=dict)
+    persistentvolumes: dict[str, dict] = field(default_factory=dict)
+    persistentvolumeclaims: dict[str, dict] = field(default_factory=dict)
+    nodes: dict[str, dict] = field(default_factory=dict)
     revisions: dict[str, list[dict]] = field(default_factory=dict)
 
 
@@ -188,8 +191,14 @@ def apply_manifest(state: ClusterState, yaml_text: str) -> ClusterState:
             _apply_configmap(state, doc)
         elif kind == "Secret":
             _apply_secret(state, doc)
+        elif kind == "PersistentVolume":
+            _apply_pv(state, doc)
+        elif kind == "PersistentVolumeClaim":
+            _apply_pvc(state, doc)
+        elif kind == "Node":
+            _apply_node(state, doc)
         else:
-            raise K8sError(f"不支持的资源类型：{kind}（支持 Pod / Deployment / Service / ConfigMap / Secret）")
+            raise K8sError(f"不支持的资源类型：{kind}（支持 Pod/Deployment/Service/ConfigMap/Secret/PV/PVC/Node）")
 
     return state
 
@@ -503,3 +512,27 @@ def _apply_secret(state: ClusterState, doc: dict) -> None:
         raise K8sError("Secret 缺少 metadata.name")
     name = metadata["name"]
     state.secrets[name] = doc
+
+
+def _apply_pv(state: ClusterState, doc: dict) -> None:
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict) or "name" not in metadata:
+        raise K8sError("PersistentVolume 缺少 metadata.name")
+    name = metadata["name"]
+    state.persistentvolumes[name] = doc
+
+
+def _apply_pvc(state: ClusterState, doc: dict) -> None:
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict) or "name" not in metadata:
+        raise K8sError("PersistentVolumeClaim 缺少 metadata.name")
+    name = metadata["name"]
+    state.persistentvolumeclaims[name] = doc
+
+
+def _apply_node(state: ClusterState, doc: dict) -> None:
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict) or "name" not in metadata:
+        raise K8sError("Node 缺少 metadata.name")
+    name = metadata["name"]
+    state.nodes[name] = doc

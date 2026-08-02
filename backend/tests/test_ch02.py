@@ -446,9 +446,11 @@ def test_all_chapter_2_levels_exist():
 def test_list_levels_returns_all_chapters():
     """list_levels() 返回 ch01 + ch02 全部 8 关"""
     levels = list_levels()
-    assert len(levels) == 16
+    assert len(levels) == 24
     chapters = {lv["chapter"] for lv in levels}
     assert "ch01" in chapters
     assert "ch02" in chapters
     assert "ch03" in chapters
     assert "ch04" in chapters
+    assert "ch05" in chapters
+    assert "ch06" in chapters
