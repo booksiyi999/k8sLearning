@@ -151,6 +151,7 @@ def apply_manifest(state: ClusterState, yaml_text: str) -> ClusterState:
     """把 YAML 应用到虚拟集群，返回新状态（in-place 修改）。
 
     支持的资源：Pod、Deployment、Service。
+    支持多文档 YAML（用 --- 分隔）。
 
     Deployment 特殊行为:
     - 每次 apply 记录一个 revision (版本历史)
@@ -158,35 +159,31 @@ def apply_manifest(state: ClusterState, yaml_text: str) -> ClusterState:
       触发回滚到上一 revision 而非正常 apply
     """
     try:
-        doc = yaml.safe_load(yaml_text)
+        docs = list(yaml.safe_load_all(yaml_text))
     except yaml.YAMLError as e:
         raise K8sError(f"YAML 解析失败：{e}") from e
     except RecursionError:
-        # W1: 深度嵌套 YAML (500+ 层) 触发 yaml.safe_load 递归溢出。
-        # RecursionError 非 YAMLError 子类, 上面的 except 不捕获, 逃逸到
-        # endpoint 顶层 except Exception → 200 ok=False 但 error 无意义。
-        # 此处捕获并转为 K8sError, 给玩家友好提示。
         raise K8sError("YAML 嵌套层级过深（最多支持约 300 层）") from None
 
-    if not isinstance(doc, dict):
-        raise K8sError("YAML 顶层必须是映射（dict）")
+    for doc in docs:
+        if doc is None:
+            continue  # 跳过空文档（--- 后面没有内容）
 
-    # 循环引用检测: yaml.safe_load 对自引用 anchor (&a / *a) 不报错,
-    # 直接构造出循环引用的 Python dict。该结构若存入 state 并被 FastAPI
-    # 序列化, json.dumps 抛 ValueError (中间件层, try/except 之外) → HTTP 500。
-    # 在此从根源阻断, 转为 K8sError → check_fn 的 except 捕获 → 200 ok=False。
-    if _has_circular_ref(doc):
-        raise K8sError("YAML 含循环引用（自引用 anchor），拒绝应用")
+        if not isinstance(doc, dict):
+            raise K8sError("YAML 顶层必须是映射（dict）")
 
-    kind = doc.get("kind")
-    if kind == "Pod":
-        _apply_pod(state, doc)
-    elif kind == "Deployment":
-        _apply_deployment(state, doc)
-    elif kind == "Service":
-        _apply_service(state, doc)
-    else:
-        raise K8sError(f"不支持的资源类型：{kind}（MVP 仅支持 Pod / Deployment / Service）")
+        if _has_circular_ref(doc):
+            raise K8sError("YAML 含循环引用（自引用 anchor），拒绝应用")
+
+        kind = doc.get("kind")
+        if kind == "Pod":
+            _apply_pod(state, doc)
+        elif kind == "Deployment":
+            _apply_deployment(state, doc)
+        elif kind == "Service":
+            _apply_service(state, doc)
+        else:
+            raise K8sError(f"不支持的资源类型：{kind}（MVP 仅支持 Pod / Deployment / Service）")
 
     return state
 
@@ -365,11 +362,122 @@ def _apply_deployment(state: ClusterState, doc: dict) -> None:
     _instantiate_pods(state, name, doc)
 
 
-def _apply_service(state: ClusterState, doc: dict) -> None:
+def _validate_service(doc: dict) -> None:
+    """Service 前置校验：metadata / spec / type / ports / selector 类型守卫。"""
     metadata = doc.get("metadata")
     if not isinstance(metadata, dict) or "name" not in metadata:
         raise K8sError(
             "Service 缺少 metadata.name（metadata 必须是非空映射）"
         )
-    name = metadata["name"]
+    spec = doc.get("spec")
+    if not isinstance(spec, dict):
+        raise K8sError("Service 缺少 spec（必须是映射）")
+
+    # type 校验（可选，默认 ClusterIP）
+    svc_type = spec.get("type", "ClusterIP")
+    if not isinstance(svc_type, str):
+        raise K8sError("Service spec.type 必须是字符串")
+    valid_types = {"ClusterIP", "NodePort", "LoadBalancer", "ExternalName"}
+    if svc_type not in valid_types:
+        raise K8sError(
+            f"Service spec.type 不支持 '{svc_type}'，可选值：{', '.join(sorted(valid_types))}"
+        )
+
+    # ports 校验（必须是非空 list）
+    ports = spec.get("ports")
+    if not isinstance(ports, list) or not ports:
+        raise K8sError(
+            "Service 缺少 spec.ports（必须是非空列表）"
+        )
+    for i, p in enumerate(ports):
+        if not isinstance(p, dict):
+            raise K8sError(
+                f"Service spec.ports[{i}] 必须是映射（dict），实际为 {type(p).__name__}"
+            )
+        if "port" not in p:
+            raise K8sError(f"Service spec.ports[{i}] 缺少 port")
+        if not isinstance(p["port"], int):
+            raise K8sError(f"Service spec.ports[{i}].port 必须是整数")
+
+    # clusterIP 校验（Headless 时必须为 None 字符串）
+    cluster_ip = spec.get("clusterIP")
+    if cluster_ip is not None:
+        if not isinstance(cluster_ip, str):
+            raise K8sError("Service spec.clusterIP 必须是字符串")
+
+    # selector 校验（可选，但 Headless+selector 是常见用法）
+    selector = spec.get("selector")
+    if selector is not None and not isinstance(selector, dict):
+        raise K8sError("Service spec.selector 必须是映射（dict）")
+
+
+def _apply_service(state: ClusterState, doc: dict) -> None:
+    _validate_service(doc)
+    name = doc["metadata"]["name"]
     state.services[name] = doc
+
+
+def resolve_service_endpoints(state: ClusterState, svc_name: str) -> list[str]:
+    """返回 Service 匹配到的 Pod 名称列表（按 selector 匹配 labels）。
+
+    Headless Service (clusterIP: None) 返回所有匹配 Pod 的名称。
+    ClusterIP Service 返回 [svc_name]（代表通过 ClusterIP 访问）。
+    """
+    if svc_name not in state.services:
+        return []
+
+    svc = state.services[svc_name]
+    spec = svc.get("spec", {})
+    if not isinstance(spec, dict):
+        return []
+
+    selector = spec.get("selector")
+    if not isinstance(selector, dict) or not selector:
+        return []
+
+    matched = []
+    for pod_name, pod in state.pods.items():
+        pod_labels = pod.get("metadata", {}).get("labels", {})
+        if not isinstance(pod_labels, dict):
+            continue
+        # 所有 selector key=value 都匹配
+        if all(pod_labels.get(k) == v for k, v in selector.items()):
+            matched.append(pod_name)
+
+    return sorted(matched)
+
+
+def resolve_dns(state: ClusterState, svc_name: str, namespace: str = "default") -> dict | None:
+    """模拟 CoreDNS 解析 Service。
+
+    ClusterIP Service: 返回 {"type": "ClusterIP", "ip": "<cluster-ip>"}
+    Headless Service: 返回 {"type": "Headless", "endpoints": ["pod-name1", ...]}
+    NodePort Service: 返回 {"type": "NodePort", "ip": "<cluster-ip>", "nodePort": <port>}
+    不存在: 返回 None
+    """
+    if svc_name not in state.services:
+        return None
+
+    svc = state.services[svc_name]
+    spec = svc.get("spec", {})
+    if not isinstance(spec, dict):
+        return None
+
+    svc_type = spec.get("type", "ClusterIP")
+    cluster_ip = spec.get("clusterIP", "10.96.0.1")  # 模拟默认 ClusterIP
+
+    # Headless Service
+    if cluster_ip == "None":
+        endpoints = resolve_service_endpoints(state, svc_name)
+        return {"type": "Headless", "endpoints": endpoints}
+
+    # NodePort
+    if svc_type == "NodePort":
+        ports = spec.get("ports", [])
+        node_port = None
+        if isinstance(ports, list) and ports and isinstance(ports[0], dict):
+            node_port = ports[0].get("nodePort")
+        return {"type": "NodePort", "ip": cluster_ip, "nodePort": node_port}
+
+    # ClusterIP
+    return {"type": "ClusterIP", "ip": cluster_ip}
