@@ -8,12 +8,12 @@ from app.validator import get_level, list_levels, CheckResult
 def test_chapter_1_has_4_levels():
     """Chapter 1 应该有 4 个关卡"""
     levels = list_levels(chapter="ch01")
-    assert len(levels) == 4, f"Expected 4 ch01 levels, got {len(levels)}"
+    assert len(levels) == 5, f"Expected 5 ch01 levels, got {len(levels)}"
 
 
 def test_all_chapter_1_levels_exist():
     """所有 Q1.x 关卡都应该可获取"""
-    for lid in ["Q1.1", "Q1.2", "Q1.3", "Q1.4"]:
+    for lid in ["Q1.1", "Q1.2", "Q1.3", "Q1.4", "Q1.5"]:
         lv = get_level(lid)
         assert lv is not None, f"Level {lid} should exist"
         assert lv.chapter == "ch01"

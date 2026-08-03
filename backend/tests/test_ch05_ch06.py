@@ -375,12 +375,12 @@ spec:
 
 class TestCh56Registration:
     def test_total_levels(self):
-        assert len(list_levels()) == 24
+        assert len(list_levels()) == 30
 
     def test_ch05_exists(self):
         ch05 = [l for l in list_levels() if l["chapter"] == "ch05"]
-        assert len(ch05) == 4
+        assert len(ch05) == 5
 
     def test_ch06_exists(self):
         ch06 = [l for l in list_levels() if l["chapter"] == "ch06"]
-        assert len(ch06) == 4
+        assert len(ch06) == 5

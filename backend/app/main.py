@@ -107,7 +107,7 @@ class ReportRequest(BaseModel):
 async def api_generate_report(req: ReportRequest):
     """生成结业报告：知识掌握度、薄弱项、成绩评定。"""
     completed = set(req.completed_levels)
-    total_levels = 24
+    total_levels = len(KNOWLEDGE_POINTS)
 
     # 1. 总体完成率
     completion_rate = len(completed) / total_levels if total_levels > 0 else 0

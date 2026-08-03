@@ -651,7 +651,7 @@ class TestChapter3Registration:
     def test_list_levels_includes_ch03(self):
         levels = list_levels()
         ch03 = [lv for lv in levels if lv["chapter"] == "ch03"]
-        assert len(ch03) == 4
+        assert len(ch03) == 5
 
     def test_get_level_q31(self):
         lv = get_level("Q3.1")
@@ -679,4 +679,4 @@ class TestChapter3Registration:
 
     def test_total_levels(self):
         levels = list_levels()
-        assert len(levels) == 24
+        assert len(levels) == 30

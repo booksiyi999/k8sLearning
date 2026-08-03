@@ -407,7 +407,7 @@ class TestChapter4Registration:
     def test_list_levels_includes_ch04(self):
         levels = list_levels()
         ch04 = [lv for lv in levels if lv["chapter"] == "ch04"]
-        assert len(ch04) == 4
+        assert len(ch04) == 5
 
     def test_get_level_q41(self):
         lv = get_level("Q4.1")
@@ -423,4 +423,4 @@ class TestChapter4Registration:
 
     def test_total_levels(self):
         levels = list_levels()
-        assert len(levels) == 24
+        assert len(levels) == 30

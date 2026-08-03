@@ -1,9 +1,9 @@
 """E2E 通关旅程测试。
 
-模拟学员从 Q1.1 到 Q6.4 的完整通关流程：
-1. 逐个提交所有 24 关的正确答案
+模拟学员从 Q1.1 到 Q6.5 的完整通关流程：
+1. 逐个提交所有 30 关的正确答案
 2. 验证 XP 累积过程（每关 +10，每章 +50）
-3. 验证最终 XP = 540（24*10 + 6*50）
+3. 验证最终 XP = 600（30*10 + 6*50）
 4. 验证报告生成（100% 完成率，S 级评定）
 5. 验证知识域全部 100%
 6. 验证无薄弱项
@@ -16,7 +16,7 @@ from app.main import app
 client = TestClient(app)
 
 # ==========================================================================
-#  24 个关卡的正确 YAML 答案（从已有测试中提取）
+#  30 个关卡的正确 YAML 答案（从已有测试中提取）
 # ==========================================================================
 
 CORRECT_ANSWERS = {
@@ -72,6 +72,20 @@ spec:
         limits:
           cpu: "500m"
           memory: "256Mi"
+""",
+    "Q1.5": """\
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-web
+  labels:
+    app: nginx
+spec:
+  containers:
+    - name: nginx
+      image: nginx:1.25
+      ports:
+        - containerPort: 80
 """,
     # ---- Chapter 2: Deployment ----
     "Q2.1": """\
@@ -152,6 +166,25 @@ spec:
         - name: nginx
           image: nginx:1.24
 """,
+    "Q2.5": """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deploy
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.25
+""",
     # ---- Chapter 3: Service 网络 ----
     "Q3.1": """\
 apiVersion: v1
@@ -205,6 +238,39 @@ spec:
   ports:
     - port: 5432
       targetPort: 5432
+""",
+    "Q3.5": """\
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-deploy
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.25
+          ports:
+            - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-svc
+spec:
+  type: ClusterIP
+  selector:
+    app: web
+  ports:
+    - port: 80
+      targetPort: 80
 """,
     # ---- Chapter 4: 配置管理 ----
     "Q4.1": """\
@@ -273,6 +339,27 @@ spec:
               name: db-secret
               key: password
 """,
+    "Q4.5": """\
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  APP_MODE: production
+  LOG_LEVEL: info
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-pod
+spec:
+  containers:
+    - name: app
+      image: nginx:1.25
+      envFrom:
+        - configMapRef:
+            name: app-config
+""",
     # ---- Chapter 5: 存储 ----
     "Q5.1": """\
 apiVersion: v1
@@ -335,6 +422,34 @@ spec:
   volumes:
     - name: shared
       emptyDir: {}
+""",
+    "Q5.5": """\
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: data-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-pod
+spec:
+  containers:
+    - name: app
+      image: nginx:1.25
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: data-pvc
 """,
     # ---- Chapter 6: 调度 ----
     "Q6.1": """\
@@ -400,19 +515,31 @@ spec:
           cpu: 200m
           memory: 256Mi
 """,
+    "Q6.5": """\
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-pod
+spec:
+  containers:
+    - name: nginx
+      image: nginx:1.25
+  nodeSelector:
+    disktype: ssd
+""",
 }
 
-# 关卡顺序（Q1.1 -> Q6.4）
-ALL_LEVEL_IDS = [f"Q{ch}.{lv}" for ch in range(1, 7) for lv in range(1, 5)]
+# 关卡顺序（Q1.1 -> Q6.5）
+ALL_LEVEL_IDS = [f"Q{ch}.{lv}" for ch in range(1, 7) for lv in range(1, 6)]
 
 # 每章关卡列表
 CHAPTERS = {
-    1: ["Q1.1", "Q1.2", "Q1.3", "Q1.4"],
-    2: ["Q2.1", "Q2.2", "Q2.3", "Q2.4"],
-    3: ["Q3.1", "Q3.2", "Q3.3", "Q3.4"],
-    4: ["Q4.1", "Q4.2", "Q4.3", "Q4.4"],
-    5: ["Q5.1", "Q5.2", "Q5.3", "Q5.4"],
-    6: ["Q6.1", "Q6.2", "Q6.3", "Q6.4"],
+    1: ["Q1.1", "Q1.2", "Q1.3", "Q1.4", "Q1.5"],
+    2: ["Q2.1", "Q2.2", "Q2.3", "Q2.4", "Q2.5"],
+    3: ["Q3.1", "Q3.2", "Q3.3", "Q3.4", "Q3.5"],
+    4: ["Q4.1", "Q4.2", "Q4.3", "Q4.4", "Q4.5"],
+    5: ["Q5.1", "Q5.2", "Q5.3", "Q5.4", "Q5.5"],
+    6: ["Q6.1", "Q6.2", "Q6.3", "Q6.4", "Q6.5"],
 }
 
 LEVEL_XP = 10
@@ -424,7 +551,7 @@ CHAPTER_BONUS_XP = 50
 # ==========================================================================
 
 class TestE2EJourney:
-    """模拟学员从 Q1.1 到 Q6.4 的完整通关旅程"""
+    """模拟学员从 Q1.1 到 Q6.5 的完整通关旅程"""
 
     @pytest.fixture(autouse=True)
     def setup_journey(self):
@@ -464,7 +591,7 @@ class TestE2EJourney:
             # XP 计算：每关 +10
             self.total_xp += LEVEL_XP
 
-            # 章节通关奖励：该章 4 关全部完成时 +50
+            # 章节通关奖励：该章 5 关全部完成时 +50
             ch_num = int(level_id.split(".")[0][1:])
             ch_levels = CHAPTERS[ch_num]
             if all(l in self.completed_levels for l in ch_levels):
@@ -476,13 +603,13 @@ class TestE2EJourney:
 
     # ---- 验证每关都通过 ----
 
-    def test_all_24_levels_passed(self):
-        """所有 24 关都应通过"""
-        assert len(self.check_results) == 24
+    def test_all_30_levels_passed(self):
+        """所有 30 关都应通过"""
+        assert len(self.check_results) == 30
         for lid, result in self.check_results.items():
             assert result["ok"] is True, f"{lid} did not pass"
 
-    def test_all_24_levels_have_cluster_state(self):
+    def test_all_30_levels_have_cluster_state(self):
         """通过的关卡应返回 cluster_state（非 None）"""
         for lid, result in self.check_results.items():
             # 部分关卡可能返回 None cluster_state（如纯 ConfigMap），但 ok=True 即可
@@ -498,45 +625,45 @@ class TestE2EJourney:
         assert self.xp_after_each_level[1] == ("Q1.2", 20)
 
     def test_xp_chapter_bonus_after_ch1(self):
-        """完成 Ch1 全部 4 关后 +50 章节奖励"""
-        # Q1.4 是 Ch1 最后一关，完成后 XP = 4*10 + 50 = 90
-        q14_xp = next(xp for lid, xp in self.xp_after_each_level if lid == "Q1.4")
-        assert q14_xp == 90  # 40 + 50
+        """完成 Ch1 全部 5 关后 +50 章节奖励"""
+        # Q1.5 是 Ch1 最后一关，完成后 XP = 5*10 + 50 = 100
+        q15_xp = next(xp for lid, xp in self.xp_after_each_level if lid == "Q1.5")
+        assert q15_xp == 100  # 50 + 50
 
     def test_xp_chapter_bonus_after_ch2(self):
-        """完成 Ch2 全部 4 关后 +50 章节奖励"""
-        q24_xp = next(xp for lid, xp in self.xp_after_each_level if lid == "Q2.4")
-        assert q24_xp == 180  # 90 + 40 + 50
+        """完成 Ch2 全部 5 关后 +50 章节奖励"""
+        q25_xp = next(xp for lid, xp in self.xp_after_each_level if lid == "Q2.5")
+        assert q25_xp == 200  # 100 + 50 + 50
 
     def test_xp_chapter_bonus_after_ch3(self):
-        q34_xp = next(xp for lid, xp in self.xp_after_each_level if lid == "Q3.4")
-        assert q34_xp == 270  # 180 + 40 + 50
+        q35_xp = next(xp for lid, xp in self.xp_after_each_level if lid == "Q3.5")
+        assert q35_xp == 300  # 200 + 50 + 50
 
     def test_xp_chapter_bonus_after_ch4(self):
-        q44_xp = next(xp for lid, xp in self.xp_after_each_level if lid == "Q4.4")
-        assert q44_xp == 360  # 270 + 40 + 50
+        q45_xp = next(xp for lid, xp in self.xp_after_each_level if lid == "Q4.5")
+        assert q45_xp == 400  # 300 + 50 + 50
 
     def test_xp_chapter_bonus_after_ch5(self):
-        q54_xp = next(xp for lid, xp in self.xp_after_each_level if lid == "Q5.4")
-        assert q54_xp == 450  # 360 + 40 + 50
+        q55_xp = next(xp for lid, xp in self.xp_after_each_level if lid == "Q5.5")
+        assert q55_xp == 500  # 400 + 50 + 50
 
     def test_xp_chapter_bonus_after_ch6(self):
-        q64_xp = next(xp for lid, xp in self.xp_after_each_level if lid == "Q6.4")
-        assert q64_xp == 540  # 450 + 40 + 50
+        q65_xp = next(xp for lid, xp in self.xp_after_each_level if lid == "Q6.5")
+        assert q65_xp == 600  # 500 + 50 + 50
 
-    def test_final_xp_is_540(self):
-        """最终 XP = 540（24*10 + 6*50）"""
-        assert self.total_xp == 540
+    def test_final_xp_is_600(self):
+        """最终 XP = 600（30*10 + 6*50）"""
+        assert self.total_xp == 600
 
     def test_xp_after_each_chapter_completion(self):
         """每个章节完成时的 XP 值"""
         expected = {
-            "Q1.4": 90,
-            "Q2.4": 180,
-            "Q3.4": 270,
-            "Q4.4": 360,
-            "Q5.4": 450,
-            "Q6.4": 540,
+            "Q1.5": 100,
+            "Q2.5": 200,
+            "Q3.5": 300,
+            "Q4.5": 400,
+            "Q5.5": 500,
+            "Q6.5": 600,
         }
         for lid, expected_xp in expected.items():
             actual_xp = next(xp for l, xp in self.xp_after_each_level if l == lid)
@@ -561,8 +688,8 @@ class TestE2EJourney:
         """报告显示 100% 完成率"""
         data = self._generate_report()
         assert data["completion_rate"] == 1.0
-        assert data["completed_count"] == 24
-        assert data["total_levels"] == 24
+        assert data["completed_count"] == 30
+        assert data["total_levels"] == 30
 
     def test_report_grade_s(self):
         """报告评定为 S 级"""
@@ -570,20 +697,20 @@ class TestE2EJourney:
         assert data["grade"] == "S"
         assert "完美通关" in data["grade_comment"]
 
-    def test_report_total_xp_540(self):
-        """报告总 XP = 540"""
+    def test_report_total_xp_600(self):
+        """报告总 XP = 600"""
         data = self._generate_report()
-        assert data["total_xp"] == 540
+        assert data["total_xp"] == 600
 
-    def test_report_first_try_count_24(self):
-        """所有 24 关都是首通"""
+    def test_report_first_try_count_30(self):
+        """所有 30 关都是首通"""
         data = self._generate_report()
-        assert data["first_try_count"] == 24
+        assert data["first_try_count"] == 30
 
-    def test_report_total_attempts_24(self):
-        """总尝试次数 = 24（每关 1 次）"""
+    def test_report_total_attempts_30(self):
+        """总尝试次数 = 30（每关 1 次）"""
         data = self._generate_report()
-        assert data["total_attempts"] == 24
+        assert data["total_attempts"] == 30
 
     # ---- 验证知识域全部 100% ----
 
@@ -625,10 +752,10 @@ class TestE2EJourney:
 
     # ---- 验证优势项 ----
 
-    def test_report_strengths_count_24(self):
-        """24 个优势项（全部首通）"""
+    def test_report_strengths_count_30(self):
+        """30 个优势项（全部首通）"""
         data = self._generate_report()
-        assert len(data["strengths"]) == 24
+        assert len(data["strengths"]) == 30
 
     # ---- 验证学习建议 ----
 
@@ -644,16 +771,16 @@ class TestE2EJourney:
         data = self._generate_report()
         for ch_id in ["ch01", "ch02", "ch03", "ch04", "ch05", "ch06"]:
             ch = data["chapter_stats"][ch_id]
-            assert ch["total"] == 4
-            assert ch["completed"] == 4
+            assert ch["total"] == 5
+            assert ch["completed"] == 5
             assert ch["rate"] == 1.0
 
     # ---- 验证时间统计 ----
 
     def test_report_total_time_spent(self):
-        """总时间 = 24 * 60 = 1440 秒"""
+        """总时间 = 30 * 60 = 1800 秒"""
         data = self._generate_report()
-        assert data["total_time_spent"] == 1440
+        assert data["total_time_spent"] == 1800
 
 
 # ==========================================================================
@@ -728,12 +855,12 @@ class TestXPAccumulation:
             ch_num = int(level_id.split(".")[0][1:])
             ch_levels = CHAPTERS[ch_num]
             done_so_far = [l for l in ALL_LEVEL_IDS[:i + 1] if l.startswith(f"Q{ch_num}.")]
-            if len(done_so_far) == 4 and ch_num not in claimed:
+            if len(done_so_far) == 5 and ch_num not in claimed:
                 expected_xp += CHAPTER_BONUS_XP
                 claimed.add(ch_num)
             assert xp_sequence[i] == (level_id, expected_xp), (
                 f"Step {i}: expected ({level_id}, {expected_xp}), got {xp_sequence[i]}"
             )
 
-        assert expected_xp == 540
-        assert total_xp == 540
+        assert expected_xp == 600
+        assert total_xp == 600

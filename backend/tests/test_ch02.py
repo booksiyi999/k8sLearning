@@ -432,12 +432,12 @@ def test_q2_4_rollback_wrong_name_caught():
 def test_chapter_2_has_4_levels():
     """Chapter 2 应该有 4 个关卡"""
     levels = list_levels(chapter="ch02")
-    assert len(levels) == 4, f"Expected 4 ch02 levels, got {len(levels)}"
+    assert len(levels) == 5, f"Expected 5 ch02 levels, got {len(levels)}"
 
 
 def test_all_chapter_2_levels_exist():
     """所有 Q2.x 关卡都应该可获取"""
-    for lid in ["Q2.1", "Q2.2", "Q2.3", "Q2.4"]:
+    for lid in ["Q2.1", "Q2.2", "Q2.3", "Q2.4", "Q2.5"]:
         lv = get_level(lid)
         assert lv is not None, f"Level {lid} should exist"
         assert lv.chapter == "ch02"
@@ -446,7 +446,7 @@ def test_all_chapter_2_levels_exist():
 def test_list_levels_returns_all_chapters():
     """list_levels() 返回 ch01 + ch02 全部 8 关"""
     levels = list_levels()
-    assert len(levels) == 24
+    assert len(levels) == 30
     chapters = {lv["chapter"] for lv in levels}
     assert "ch01" in chapters
     assert "ch02" in chapters

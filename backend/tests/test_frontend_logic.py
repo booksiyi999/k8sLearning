@@ -3,7 +3,7 @@
 测试前端依赖的后端 API 逻辑，重点覆盖：
 - /api/report 端点的各种边界情况（空数据/部分数据/完整数据）
 - /api/meta 端点的数据结构完整性
-- /api/level/{id} 端点对所有 24 关的正确返回
+- /api/level/{id} 端点对所有 30 关的正确返回
 """
 import pytest
 from fastapi.testclient import TestClient
@@ -11,17 +11,17 @@ from app.main import app
 
 client = TestClient(app)
 
-# 所有 24 个关卡 ID
-ALL_LEVEL_IDS = [f"Q{ch}.{lv}" for ch in range(1, 7) for lv in range(1, 5)]
+# 所有 30 个关卡 ID
+ALL_LEVEL_IDS = [f"Q{ch}.{lv}" for ch in range(1, 7) for lv in range(1, 6)]
 
 # 各章节的关卡 ID
 CH_LEVELS = {
-    1: ["Q1.1", "Q1.2", "Q1.3", "Q1.4"],
-    2: ["Q2.1", "Q2.2", "Q2.3", "Q2.4"],
-    3: ["Q3.1", "Q3.2", "Q3.3", "Q3.4"],
-    4: ["Q4.1", "Q4.2", "Q4.3", "Q4.4"],
-    5: ["Q5.1", "Q5.2", "Q5.3", "Q5.4"],
-    6: ["Q6.1", "Q6.2", "Q6.3", "Q6.4"],
+    1: ["Q1.1", "Q1.2", "Q1.3", "Q1.4", "Q1.5"],
+    2: ["Q2.1", "Q2.2", "Q2.3", "Q2.4", "Q2.5"],
+    3: ["Q3.1", "Q3.2", "Q3.3", "Q3.4", "Q3.5"],
+    4: ["Q4.1", "Q4.2", "Q4.3", "Q4.4", "Q4.5"],
+    5: ["Q5.1", "Q5.2", "Q5.3", "Q5.4", "Q5.5"],
+    6: ["Q6.1", "Q6.2", "Q6.3", "Q6.4", "Q6.5"],
 }
 
 
@@ -44,14 +44,14 @@ class TestReportEmptyData:
         data = r.json()
         assert data["completion_rate"] == 0.0
         assert data["completed_count"] == 0
-        assert data["total_levels"] == 24
+        assert data["total_levels"] == 30
         assert data["total_xp"] == 0
         assert data["grade"] == "D"
         assert data["first_try_count"] == 0
         assert data["total_attempts"] == 0
 
     def test_empty_weak_areas_all_unfinished(self):
-        """空数据时所有 24 关都是薄弱项"""
+        """空数据时所有 30 关都是薄弱项"""
         r = client.post("/api/report", json={
             "completed_levels": [],
             "level_attempts": {},
@@ -60,7 +60,7 @@ class TestReportEmptyData:
             "total_xp": 0,
         })
         data = r.json()
-        assert len(data["weak_areas"]) == 24
+        assert len(data["weak_areas"]) == 30
         for wa in data["weak_areas"]:
             assert wa["reason"] == "未完成"
 
@@ -93,41 +93,41 @@ class TestReportPartialData:
             "level_attempts": {lid: 1 for lid in CH_LEVELS[1]},
             "level_first_try": CH_LEVELS[1],
             "level_time_spent": {},
-            "total_xp": 90,  # 4*10 + 1*50
+            "total_xp": 100,  # 5*10 + 1*50
         })
         data = r.json()
-        assert data["completion_rate"] == pytest.approx(4 / 24)
-        assert data["completed_count"] == 4
+        assert data["completion_rate"] == pytest.approx(5 / 30)
+        assert data["completed_count"] == 5
 
     def test_ch1_only_grade_is_c(self):
-        """4/24 ≈ 16.7% -> D 级"""
+        """5/30 ≈ 16.7% -> D 级"""
         r = client.post("/api/report", json={
             "completed_levels": CH_LEVELS[1],
-            "total_xp": 90,
+            "total_xp": 100,
         })
         data = r.json()
         assert data["grade"] == "D"
 
     def test_ch1_only_weak_areas_count(self):
-        """只完成 4 关，20 关未完成 -> 20 个薄弱项"""
+        """只完成 5 关，25 关未完成 -> 25 个薄弱项"""
         r = client.post("/api/report", json={
             "completed_levels": CH_LEVELS[1],
-            "total_xp": 90,
+            "total_xp": 100,
         })
         data = r.json()
         unfinished = [wa for wa in data["weak_areas"] if wa["reason"] == "未完成"]
-        assert len(unfinished) == 20
+        assert len(unfinished) == 25
 
     def test_ch1_only_domain_stats(self):
         r = client.post("/api/report", json={
             "completed_levels": CH_LEVELS[1],
-            "total_xp": 90,
+            "total_xp": 100,
         })
         data = r.json()
-        # 工作负载管理域包含 Q1.x + Q2.x 共 8 关，完成了 4 关
+        # 工作负载管理域包含 Q1.x + Q2.x 共 10 关，完成了 5 关
         wl = data["domain_stats"]["工作负载管理"]
-        assert wl["total"] == 8
-        assert wl["completed"] == 4
+        assert wl["total"] == 10
+        assert wl["completed"] == 5
         assert wl["rate"] == pytest.approx(0.5)
         # 其他域都为 0
         for domain in ["网络与服务", "配置与密钥", "存储管理", "调度与资源"]:
@@ -137,21 +137,21 @@ class TestReportPartialData:
     def test_ch1_only_chapter_stats(self):
         r = client.post("/api/report", json={
             "completed_levels": CH_LEVELS[1],
-            "total_xp": 90,
+            "total_xp": 100,
         })
         data = r.json()
         ch1 = data["chapter_stats"]["ch01"]
-        assert ch1["total"] == 4
-        assert ch1["completed"] == 4
+        assert ch1["total"] == 5
+        assert ch1["completed"] == 5
         assert ch1["rate"] == 1.0
         for ch_id in ["ch02", "ch03", "ch04", "ch05", "ch06"]:
             assert data["chapter_stats"][ch_id]["completed"] == 0
 
 
 class TestReportFullData:
-    """全部完成（24关全通）"""
+    """全部完成（30关全通）"""
 
-    def _full_report_payload(self, first_try_count=24, extra_attempts=None):
+    def _full_report_payload(self, first_try_count=30, extra_attempts=None):
         first_try = ALL_LEVEL_IDS[:first_try_count]
         attempts = {lid: 1 for lid in ALL_LEVEL_IDS}
         if extra_attempts:
@@ -162,24 +162,24 @@ class TestReportFullData:
             "level_attempts": attempts,
             "level_first_try": first_try,
             "level_time_spent": {lid: 60 for lid in ALL_LEVEL_IDS},
-            "total_xp": 540,
+            "total_xp": 600,
         }
 
     def test_full_completion_rate(self):
         r = client.post("/api/report", json=self._full_report_payload())
         data = r.json()
         assert data["completion_rate"] == 1.0
-        assert data["completed_count"] == 24
+        assert data["completed_count"] == 30
 
     def test_full_grade_s_with_20_plus_first_try(self):
-        """24 关全通 + 首通 >= 20 -> S 级"""
-        r = client.post("/api/report", json=self._full_report_payload(first_try_count=24))
+        """30 关全通 + 首通 >= 20 -> S 级"""
+        r = client.post("/api/report", json=self._full_report_payload(first_try_count=30))
         data = r.json()
         assert data["grade"] == "S"
         assert "完美通关" in data["grade_comment"]
 
     def test_full_grade_a_when_first_try_below_20(self):
-        """24 关全通但首通 < 20 -> A 级（因为 completion_rate=1.0 但 first_try < 20）"""
+        """30 关全通但首通 < 20 -> A 级（因为 completion_rate=1.0 但 first_try < 20）"""
         r = client.post("/api/report", json=self._full_report_payload(first_try_count=19))
         data = r.json()
         assert data["grade"] == "A"
@@ -223,9 +223,9 @@ class TestReportFullData:
         assert data["xp_to_next_rank"] == 0
 
     def test_full_strengths_count(self):
-        r = client.post("/api/report", json=self._full_report_payload(first_try_count=24))
+        r = client.post("/api/report", json=self._full_report_payload(first_try_count=30))
         data = r.json()
-        assert len(data["strengths"]) == 24
+        assert len(data["strengths"]) == 30
 
 
 class TestReportFirstTry:
@@ -271,7 +271,7 @@ class TestReportAttempts:
     def test_attempts_reflected_in_domain_levels(self):
         r = client.post("/api/report", json={
             "completed_levels": CH_LEVELS[1],
-            "level_attempts": {"Q1.1": 3, "Q1.2": 1, "Q1.3": 5, "Q1.4": 2},
+            "level_attempts": {"Q1.1": 3, "Q1.2": 1, "Q1.3": 5, "Q1.4": 2, "Q1.5": 1},
             "total_xp": 40,
         })
         data = r.json()
@@ -284,11 +284,11 @@ class TestReportAttempts:
     def test_total_attempts_summed(self):
         r = client.post("/api/report", json={
             "completed_levels": CH_LEVELS[1],
-            "level_attempts": {"Q1.1": 3, "Q1.2": 1, "Q1.3": 5, "Q1.4": 2},
+            "level_attempts": {"Q1.1": 3, "Q1.2": 1, "Q1.3": 5, "Q1.4": 2, "Q1.5": 1},
             "total_xp": 40,
         })
         data = r.json()
-        assert data["total_attempts"] == 11
+        assert data["total_attempts"] == 12
 
     def test_attempts_default_zero_when_missing(self):
         r = client.post("/api/report", json={
@@ -308,10 +308,10 @@ class TestReportXP:
     def test_total_xp_echoed(self):
         r = client.post("/api/report", json={
             "completed_levels": [],
-            "total_xp": 540,
+            "total_xp": 600,
         })
         data = r.json()
-        assert data["total_xp"] == 540
+        assert data["total_xp"] == 600
 
     def test_rank_pod_apprentice_at_40_xp(self):
         r = client.post("/api/report", json={
@@ -361,27 +361,27 @@ class TestReportDomainMastery:
     """知识域掌握度计算验证"""
 
     def test_partial_domain_completion(self):
-        """工作负载管理域完成 6/8"""
-        completed = CH_LEVELS[1] + CH_LEVELS[2][:2]  # Q1.1-Q1.4 + Q2.1-Q2.2
+        """工作负载管理域完成 7/10"""
+        completed = CH_LEVELS[1] + CH_LEVELS[2][:2]  # Q1.1-Q1.5 + Q2.1-Q2.2
         r = client.post("/api/report", json={
             "completed_levels": completed,
             "total_xp": 60,
         })
         data = r.json()
         wl = data["domain_stats"]["工作负载管理"]
-        assert wl["total"] == 8
-        assert wl["completed"] == 6
-        assert wl["rate"] == pytest.approx(6 / 8)
+        assert wl["total"] == 10
+        assert wl["completed"] == 7
+        assert wl["rate"] == pytest.approx(7 / 10)
 
     def test_network_domain(self):
         r = client.post("/api/report", json={
             "completed_levels": CH_LEVELS[3],
-            "total_xp": 90,
+            "total_xp": 100,
         })
         data = r.json()
         net = data["domain_stats"]["网络与服务"]
-        assert net["total"] == 4
-        assert net["completed"] == 4
+        assert net["total"] == 5
+        assert net["completed"] == 5
         assert net["rate"] == 1.0
 
     def test_domain_levels_include_knowledge_points(self):
@@ -405,7 +405,7 @@ class TestReportWeakAreas:
             "total_xp": 0,
         })
         data = r.json()
-        assert len(data["weak_areas"]) == 24
+        assert len(data["weak_areas"]) == 30
         assert data["weak_areas"][0]["reason"] == "未完成"
 
     def test_weak_area_too_many_attempts(self):
@@ -457,55 +457,55 @@ class TestReportGradeBoundaries:
 
     def test_grade_d_below_50_percent(self):
         """完成率 < 50% -> D"""
-        completed = ALL_LEVEL_IDS[:11]  # 11/24 ≈ 45.8%
+        completed = ALL_LEVEL_IDS[:14]  # 14/30 ≈ 46.7%
         r = client.post("/api/report", json={
             "completed_levels": completed,
-            "total_xp": 110,
+            "total_xp": 140,
         })
         assert r.json()["grade"] == "D"
 
     def test_grade_c_at_50_percent(self):
-        """完成率 = 50% (12/24) -> C"""
-        completed = ALL_LEVEL_IDS[:12]  # 12/24 = 50%
+        """完成率 = 50% (15/30) -> C"""
+        completed = ALL_LEVEL_IDS[:15]  # 15/30 = 50%
         r = client.post("/api/report", json={
             "completed_levels": completed,
-            "total_xp": 120,
+            "total_xp": 150,
         })
         assert r.json()["grade"] == "C"
 
     def test_grade_c_boundary_just_below_70(self):
-        """完成率 16/24 ≈ 66.7% -> C"""
-        completed = ALL_LEVEL_IDS[:16]
+        """完成率 20/30 ≈ 66.7% -> C"""
+        completed = ALL_LEVEL_IDS[:20]
         r = client.post("/api/report", json={
             "completed_levels": completed,
-            "total_xp": 160,
+            "total_xp": 200,
         })
         assert r.json()["grade"] == "C"
 
     def test_grade_b_at_70_percent(self):
-        """完成率 17/24 ≈ 70.8% -> B"""
-        completed = ALL_LEVEL_IDS[:17]  # 17/24 ≈ 70.8%
-        r = client.post("/api/report", json={
-            "completed_levels": completed,
-            "total_xp": 170,
-        })
-        assert r.json()["grade"] == "B"
-
-    def test_grade_b_boundary_just_below_90(self):
-        """完成率 21/24 = 87.5% -> B"""
-        completed = ALL_LEVEL_IDS[:21]
+        """完成率 21/30 = 70% -> B"""
+        completed = ALL_LEVEL_IDS[:21]  # 21/30 = 70%
         r = client.post("/api/report", json={
             "completed_levels": completed,
             "total_xp": 210,
         })
         assert r.json()["grade"] == "B"
 
-    def test_grade_a_at_90_percent(self):
-        """完成率 22/24 ≈ 91.7% -> A"""
-        completed = ALL_LEVEL_IDS[:22]
+    def test_grade_b_boundary_just_below_90(self):
+        """完成率 26/30 = 86.7% -> B"""
+        completed = ALL_LEVEL_IDS[:26]
         r = client.post("/api/report", json={
             "completed_levels": completed,
-            "total_xp": 220,
+            "total_xp": 260,
+        })
+        assert r.json()["grade"] == "B"
+
+    def test_grade_a_at_90_percent(self):
+        """完成率 27/30 = 90% -> A"""
+        completed = ALL_LEVEL_IDS[:27]
+        r = client.post("/api/report", json={
+            "completed_levels": completed,
+            "total_xp": 270,
         })
         assert r.json()["grade"] == "A"
 
@@ -514,7 +514,7 @@ class TestReportGradeBoundaries:
         r = client.post("/api/report", json={
             "completed_levels": ALL_LEVEL_IDS,
             "level_first_try": ALL_LEVEL_IDS[:10],
-            "total_xp": 540,
+            "total_xp": 600,
         })
         assert r.json()["grade"] == "A"
 
@@ -523,16 +523,16 @@ class TestReportGradeBoundaries:
         r = client.post("/api/report", json={
             "completed_levels": ALL_LEVEL_IDS,
             "level_first_try": ALL_LEVEL_IDS[:20],
-            "total_xp": 540,
+            "total_xp": 600,
         })
         assert r.json()["grade"] == "S"
 
-    def test_grade_s_full_and_24_first_try(self):
-        """100% 完成 + 24 首通 -> S"""
+    def test_grade_s_full_and_30_first_try(self):
+        """100% 完成 + 30 首通 -> S"""
         r = client.post("/api/report", json={
             "completed_levels": ALL_LEVEL_IDS,
             "level_first_try": ALL_LEVEL_IDS,
-            "total_xp": 540,
+            "total_xp": 600,
         })
         assert r.json()["grade"] == "S"
 
@@ -551,7 +551,7 @@ class TestReportRecommendations:
 
     def test_recommendation_low_mastery(self):
         """域完成率 < 50% -> 建议重点复习"""
-        # 工作负载管理 8 关，完成 2 关 -> 25%
+        # 工作负载管理 10 关，完成 2 关 -> 20%
         r = client.post("/api/report", json={
             "completed_levels": ["Q1.1", "Q1.2"],
             "total_xp": 20,
@@ -563,7 +563,7 @@ class TestReportRecommendations:
 
     def test_recommendation_almost_done(self):
         """域完成率 >= 50% 但 < 100% -> 建议再完成 N 关"""
-        # 工作负载管理 8 关，完成 5 关 -> 62.5%
+        # 工作负载管理 10 关，完成 5 关 -> 50%
         r = client.post("/api/report", json={
             "completed_levels": ["Q1.1", "Q1.2", "Q1.3", "Q1.4", "Q2.1"],
             "total_xp": 50,
@@ -572,21 +572,21 @@ class TestReportRecommendations:
         wl_recs = [rec for rec in data["recommendations"] if "工作负载管理" in rec]
         assert len(wl_recs) == 1
         assert "即将通关" in wl_recs[0]
-        assert "3 关" in wl_recs[0]  # 8-5=3
+        assert "5 关" in wl_recs[0]  # 10-5=5
 
     def test_recommendation_none_when_full(self):
         r = client.post("/api/report", json={
             "completed_levels": ALL_LEVEL_IDS,
             "level_first_try": ALL_LEVEL_IDS,
-            "total_xp": 540,
+            "total_xp": 600,
         })
         data = r.json()
         assert len(data["recommendations"]) == 0
 
     def test_mixed_recommendations(self):
         """部分域未开始、部分低掌握度、部分即将通关"""
-        # 工作负载管理: 3/8 = 37.5% -> 低掌握度
-        # 网络与服务: 3/4 = 75% -> 即将通关
+        # 工作负载管理: 3/10 = 30% -> 低掌握度
+        # 网络与服务: 3/5 = 60% -> 即将通关
         # 配置与密钥/存储管理/调度与资源: 0% -> 未开始
         completed = ["Q1.1", "Q1.2", "Q1.3", "Q3.1", "Q3.2", "Q3.3"]
         r = client.post("/api/report", json={
@@ -650,12 +650,12 @@ class TestMetaChapters:
 
 
 class TestMetaKnowledgePoints:
-    """知识点覆盖所有 24 关"""
+    """知识点覆盖所有 30 关"""
 
-    def test_kp_covers_all_24(self):
+    def test_kp_covers_all_30(self):
         r = client.get("/api/meta")
         kp = r.json()["knowledge_points"]
-        assert len(kp) == 24
+        assert len(kp) == 30
         for lid in ALL_LEVEL_IDS:
             assert lid in kp
             assert isinstance(kp[lid], list)
@@ -678,7 +678,7 @@ class TestMetaLevelXP:
     def test_all_levels_have_xp(self):
         r = client.get("/api/meta")
         level_xp = r.json()["level_xp"]
-        assert len(level_xp) == 24
+        assert len(level_xp) == 30
 
     def test_each_level_xp_is_10(self):
         r = client.get("/api/meta")
@@ -735,25 +735,25 @@ class TestMetaKnowledgeDomains:
         expected = {"工作负载管理", "网络与服务", "配置与密钥", "存储管理", "调度与资源"}
         assert set(domains.keys()) == expected
 
-    def test_domain_covers_all_24(self):
+    def test_domain_covers_all_30(self):
         r = client.get("/api/meta")
         domains = r.json()["knowledge_domains"]
         all_covered = []
         for level_ids in domains.values():
             all_covered.extend(level_ids)
-        assert len(all_covered) == 24
+        assert len(all_covered) == 30
         assert set(all_covered) == set(ALL_LEVEL_IDS)
 
-    def test_workload_domain_has_8(self):
+    def test_workload_domain_has_10(self):
         r = client.get("/api/meta")
         domains = r.json()["knowledge_domains"]
-        assert len(domains["工作负载管理"]) == 8
+        assert len(domains["工作负载管理"]) == 10
 
-    def test_other_domains_have_4(self):
+    def test_other_domains_have_5(self):
         r = client.get("/api/meta")
         domains = r.json()["knowledge_domains"]
         for d in ["网络与服务", "配置与密钥", "存储管理", "调度与资源"]:
-            assert len(domains[d]) == 4
+            assert len(domains[d]) == 5
 
 
 # ==========================================================================
@@ -761,7 +761,7 @@ class TestMetaKnowledgeDomains:
 # ==========================================================================
 
 class TestLevelEndpoint:
-    """所有 24 个关卡（Q1.1-Q6.4）都能正确返回"""
+    """所有 30 个关卡（Q1.1-Q6.5）都能正确返回"""
 
     @pytest.mark.parametrize("level_id", ALL_LEVEL_IDS)
     def test_level_returns_200(self, level_id):
@@ -802,7 +802,7 @@ class TestLevelEndpoint:
 
     def test_level_chapter_mapping(self):
         for ch_num in range(1, 7):
-            for lv_num in range(1, 5):
+            for lv_num in range(1, 6):
                 lid = f"Q{ch_num}.{lv_num}"
                 r = client.get(f"/api/level/{lid}")
                 assert r.json()["chapter"] == f"ch0{ch_num}"
