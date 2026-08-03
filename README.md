@@ -1,6 +1,6 @@
 # 🍒 K8s Quest
 
-> 樱桃的 K8s 闯关学习 App - 6 章 30 关，从零到 K8s 实战（含真实集群模式）
+> 樱桃的 K8s 闯关学习 App - 18 章 90 关，从零到 K8s 实战（含真实集群模式）
 
 ## 📊 当前状态
 
@@ -154,8 +154,9 @@ cd ~/k8s-quest/backend
 - ✅ v0.1: MVP 单关 demo（Pod 创建）
 - ✅ v0.2: 12 关完整课程（Pod + Deployment + Service）
 - ✅ v0.3: 24 关 + 游戏化 + 结业报告
-- ✅ v0.4: 教学模式 + 真实集群连接 + 30 关 + 701 测试
-- 🔜 v0.5: AI 答题助手 + 集群状态实时刷新
+- ✅ v0.5: Ch7-Ch12 新增 30 关 (Job/CronJob/StatefulSet/RBAC/HPA/Ingress/NetworkPolicy)
+- ✅ v0.6: Ch13-Ch18 新增 30 关 (DaemonSet/Namespace/PDB/PriorityClass/CRD/ServiceAccount) + 1247 测试
+- 🔜 v0.7: AI 答题助手 + 集群状态实时刷新
 - 🔜 v1.0: 用户系统 + 进度云端同步 + CKA 模拟器
 
 ## 团队

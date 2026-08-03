@@ -47,13 +47,21 @@ def get_level(level_id: str) -> Level | None:
     from app.levels.ch10_hpa import CHAPTER_10_LEVELS
     from app.levels.ch11_ingress import CHAPTER_11_LEVELS
     from app.levels.ch12_networkpolicy import CHAPTER_12_LEVELS
+    from app.levels.ch13_daemonset import CHAPTER_13_LEVELS
+    from app.levels.ch14_namespace_quota import CHAPTER_14_LEVELS
+    from app.levels.ch15_pdb import CHAPTER_15_LEVELS
+    from app.levels.ch16_priority import CHAPTER_16_LEVELS
+    from app.levels.ch17_crd_operator import CHAPTER_17_LEVELS
+    from app.levels.ch18_sa_security import CHAPTER_18_LEVELS
     from app.levels.cluster_practice import CLUSTER_PRACTICE_LEVELS
     all_levels = (
         CHAPTER_1_LEVELS + CHAPTER_2_LEVELS + CHAPTER_3_LEVELS
         + CHAPTER_4_LEVELS + CHAPTER_5_LEVELS + CHAPTER_6_LEVELS
         + CHAPTER_7_LEVELS + CHAPTER_8_LEVELS
         + CHAPTER_9_LEVELS + CHAPTER_10_LEVELS + CHAPTER_11_LEVELS
-        + CHAPTER_12_LEVELS
+        + CHAPTER_12_LEVELS + CHAPTER_13_LEVELS + CHAPTER_14_LEVELS
+        + CHAPTER_15_LEVELS + CHAPTER_16_LEVELS + CHAPTER_17_LEVELS
+        + CHAPTER_18_LEVELS
         + CLUSTER_PRACTICE_LEVELS
     )
     for lv in all_levels:
@@ -76,13 +84,21 @@ def list_levels(chapter: str | None = None) -> list[dict]:
     from app.levels.ch10_hpa import CHAPTER_10_LEVELS
     from app.levels.ch11_ingress import CHAPTER_11_LEVELS
     from app.levels.ch12_networkpolicy import CHAPTER_12_LEVELS
+    from app.levels.ch13_daemonset import CHAPTER_13_LEVELS
+    from app.levels.ch14_namespace_quota import CHAPTER_14_LEVELS
+    from app.levels.ch15_pdb import CHAPTER_15_LEVELS
+    from app.levels.ch16_priority import CHAPTER_16_LEVELS
+    from app.levels.ch17_crd_operator import CHAPTER_17_LEVELS
+    from app.levels.ch18_sa_security import CHAPTER_18_LEVELS
     from app.levels.cluster_practice import CLUSTER_PRACTICE_LEVELS
     all_levels = (
         CHAPTER_1_LEVELS + CHAPTER_2_LEVELS + CHAPTER_3_LEVELS
         + CHAPTER_4_LEVELS + CHAPTER_5_LEVELS + CHAPTER_6_LEVELS
         + CHAPTER_7_LEVELS + CHAPTER_8_LEVELS
         + CHAPTER_9_LEVELS + CHAPTER_10_LEVELS + CHAPTER_11_LEVELS
-        + CHAPTER_12_LEVELS
+        + CHAPTER_12_LEVELS + CHAPTER_13_LEVELS + CHAPTER_14_LEVELS
+        + CHAPTER_15_LEVELS + CHAPTER_16_LEVELS + CHAPTER_17_LEVELS
+        + CHAPTER_18_LEVELS
         + CLUSTER_PRACTICE_LEVELS
     )
     if chapter is not None:

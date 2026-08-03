@@ -90,6 +90,48 @@ CHAPTERS_META = {
         "description": "网络策略，Pod 间流量控制与安全隔离",
         "difficulty": 5,
     },
+    "ch13": {
+        "title": "DaemonSet",
+        "icon": "🛡️",
+        "color": "#009688",
+        "description": "守护进程集，确保每个节点运行一个 Pod 副本",
+        "difficulty": 3,
+    },
+    "ch14": {
+        "title": "Namespace & Quota",
+        "icon": "📦",
+        "color": "#e91e63",
+        "description": "命名空间与资源配额，多团队资源隔离",
+        "difficulty": 4,
+    },
+    "ch15": {
+        "title": "PodDisruptionBudget",
+        "icon": "🛡️",
+        "color": "#00bcd4",
+        "description": "中断预算，保护应用在自愿中断时的高可用",
+        "difficulty": 3,
+    },
+    "ch16": {
+        "title": "PriorityClass",
+        "icon": "⭐",
+        "color": "#ff9800",
+        "description": "优先级与抢占，确保关键工作负载优先调度",
+        "difficulty": 4,
+    },
+    "ch17": {
+        "title": "CRD & Operator",
+        "icon": "🔧",
+        "color": "#673ab7",
+        "description": "自定义资源定义与 Operator 模式，扩展 K8s 能力",
+        "difficulty": 5,
+    },
+    "ch18": {
+        "title": "SA & 安全上下文",
+        "icon": "🛡️",
+        "color": "#3f51b5",
+        "description": "ServiceAccount 身份与 Pod 安全标准",
+        "difficulty": 4,
+    },
 }
 
 # ==================== 知识点映射 ====================
@@ -163,14 +205,50 @@ KNOWLEDGE_POINTS = {
     "Q12.3": ["podSelector", "Pod 白名单", "入站控制"],
     "Q12.4": ["ingress/egress", "双向控制", "出入站规则"],
     "Q12.5": ["NetworkPolicy 实战", "数据库隔离", "最小权限原则"],
+    # Ch13: DaemonSet
+    "Q13.1": ["DaemonSet 概念", "每节点一个 Pod", "spec.template"],
+    "Q13.2": ["nodeSelector", "节点选择", "标签过滤"],
+    "Q13.3": ["RollingUpdate", "滚动更新", "maxUnavailable"],
+    "Q13.4": ["DaemonSet vs Deployment", "工作负载选择", "节点级服务"],
+    "Q13.5": ["DaemonSet 实战", "Fluent Bit 日志采集", "hostPath 挂载"],
+    # Ch14: Namespace & ResourceQuota
+    "Q14.1": ["Namespace 概念", "资源隔离", "逻辑分区"],
+    "Q14.2": ["Namespace 作用域", "metadata.namespace", "多文档 YAML"],
+    "Q14.3": ["ResourceQuota", "资源配额", "spec.hard"],
+    "Q14.4": ["LimitRange", "资源限制范围", "default/defaultRequest"],
+    "Q14.5": ["多团队隔离实战", "Namespace+Quota+LimitRange", "资源隔离方案"],
+    # Ch15: PodDisruptionBudget
+    "Q15.1": ["PodDisruptionBudget", "minAvailable", "自愿中断保护"],
+    "Q15.2": ["minAvailable 百分比", "动态保护策略", "HPA 配合"],
+    "Q15.3": ["maxUnavailable", "中断预算策略", "minAvailable vs maxUnavailable"],
+    "Q15.4": ["PDB selector", "自愿中断 vs 非自愿中断", "驱逐保护"],
+    "Q15.5": ["Deployment+PDB 实战", "生产保护方案", "多文档 YAML"],
+    # Ch16: PriorityClass
+    "Q16.1": ["PriorityClass", "value", "优先级基础"],
+    "Q16.2": ["抢占机制", "preemptionPolicy", "PreemptLowerPriority"],
+    "Q16.3": ["globalDefault", "默认优先级", "全局配置"],
+    "Q16.4": ["优先级分层设计", "系统级 vs 用户级", "多 PriorityClass"],
+    "Q16.5": ["多优先级工作负载", "priorityClassName", "Pod 优先级调度"],
+    # Ch17: CRD & Operator
+    "Q17.1": ["CRD 概念", "spec.group", "spec.names", "spec.versions"],
+    "Q17.2": ["自定义资源 CR", "apiVersion 匹配", "spec 字段"],
+    "Q17.3": ["CRD Schema 验证", "openAPIV3Schema", "类型校验"],
+    "Q17.4": ["Operator 模式", "控制循环", "watch-compare-act"],
+    "Q17.5": ["Operator 实战", "CRD + 控制器部署", "多文档 YAML"],
+    # Ch18: ServiceAccount & 安全上下文
+    "Q18.1": ["ServiceAccount", "身份认证", "metadata.name"],
+    "Q18.2": ["Pod 绑定 SA", "serviceAccountName", "身份传递"],
+    "Q18.3": ["SecurityContext", "runAsNonRoot", "readOnlyRootFilesystem"],
+    "Q18.4": ["Pod Security Standards", "restricted", "baseline", "privileged"],
+    "Q18.5": ["最小权限实战", "SA + 安全 Pod", "多文档 YAML"],
 }
 
 # ==================== XP 配置 ====================
 
-LEVEL_XP = {f"Q{i}.{j}": 10 for i in range(1, 13) for j in range(1, 6)}
+LEVEL_XP = {f"Q{i}.{j}": 10 for i in range(1, 19) for j in range(1, 6)}
 
 # 章节通关奖励
-CHAPTER_BONUS_XP = {f"ch{i:02d}": 50 for i in range(1, 13)}
+CHAPTER_BONUS_XP = {f"ch{i:02d}": 50 for i in range(1, 19)}
 
 # 等级称号 (总XP -> 称号)
 RANKS = [
@@ -216,6 +294,12 @@ KNOWLEDGE_DOMAINS = {
     "自动伸缩": ["Q10.1", "Q10.2", "Q10.3", "Q10.4", "Q10.5"],
     "入口路由": ["Q11.1", "Q11.2", "Q11.3", "Q11.4", "Q11.5"],
     "网络安全": ["Q12.1", "Q12.2", "Q12.3", "Q12.4", "Q12.5"],
+    "守护进程": ["Q13.1", "Q13.2", "Q13.3", "Q13.4", "Q13.5"],
+    "资源管理": ["Q14.1", "Q14.2", "Q14.3", "Q14.4", "Q14.5"],
+    "中断保护": ["Q15.1", "Q15.2", "Q15.3", "Q15.4", "Q15.5"],
+    "优先级调度": ["Q16.1", "Q16.2", "Q16.3", "Q16.4", "Q16.5"],
+    "自定义资源": ["Q17.1", "Q17.2", "Q17.3", "Q17.4", "Q17.5"],
+    "安全与身份": ["Q18.1", "Q18.2", "Q18.3", "Q18.4", "Q18.5"],
 }
 
 

@@ -1475,17 +1475,17 @@ class TestE2EJourney:
         return r.json()
 
     def test_report_completion_rate_100(self):
-        """报告显示 100% 完成率"""
+        """报告显示完成率（60/90 = Ch1-12 全通）"""
         data = self._generate_report()
-        assert data["completion_rate"] == 1.0
+        assert data["completion_rate"] == 60 / 90
         assert data["completed_count"] == 60
-        assert data["total_levels"] == 60
+        assert data["total_levels"] == 90
 
     def test_report_grade_s(self):
-        """报告评定为 S 级"""
+        """报告评定（60/90 完成率 -> C 级）"""
         data = self._generate_report()
-        assert data["grade"] == "S"
-        assert "完美通关" in data["grade_comment"]
+        assert data["grade"] == "C"
+        assert "及格" in data["grade_comment"]
 
     def test_report_total_xp_1200(self):
         """报告总 XP = 1200"""
@@ -1505,27 +1505,35 @@ class TestE2EJourney:
     # ---- 验证知识域全部 100% ----
 
     def test_report_all_domains_100(self):
-        """所有知识域掌握度 100%"""
+        """Ch1-12 知识域 100%，Ch13-18 知识域 0%"""
         data = self._generate_report()
+        ch12_domains = {"工作负载管理", "网络与服务", "配置与密钥", "存储管理", "调度与资源",
+                        "批量任务", "有状态应用", "权限管理", "自动伸缩", "入口路由", "网络安全"}
         for domain, stats in data["domain_stats"].items():
-            assert stats["rate"] == 1.0, f"Domain {domain} rate is {stats['rate']}, expected 1.0"
-            assert stats["completed"] == stats["total"]
+            if domain in ch12_domains:
+                assert stats["rate"] == 1.0, f"Domain {domain} rate is {stats['rate']}, expected 1.0"
+                assert stats["completed"] == stats["total"]
+            else:
+                assert stats["rate"] == 0.0, f"Domain {domain} rate is {stats['rate']}, expected 0.0"
 
     def test_report_domain_levels_all_completed(self):
-        """每个知识域的所有关卡都标记为已完成"""
+        """Ch1-12 知识域的关卡都标记为已完成"""
         data = self._generate_report()
+        ch12_domains = {"工作负载管理", "网络与服务", "配置与密钥", "存储管理", "调度与资源",
+                        "批量任务", "有状态应用", "权限管理", "自动伸缩", "入口路由", "网络安全"}
         for domain, stats in data["domain_stats"].items():
-            for lv in stats["levels"]:
-                assert lv["completed"] is True, f"{lv['id']} not marked completed"
-                assert lv["first_try"] is True, f"{lv['id']} not marked first_try"
-                assert lv["attempts"] == 1
+            if domain in ch12_domains:
+                for lv in stats["levels"]:
+                    assert lv["completed"] is True, f"{lv['id']} not marked completed"
+                    assert lv["first_try"] is True, f"{lv['id']} not marked first_try"
+                    assert lv["attempts"] == 1
 
     # ---- 验证无薄弱项 ----
 
     def test_report_no_weak_areas(self):
-        """无薄弱项"""
+        """Ch13-18 未完成 -> 有薄弱项"""
         data = self._generate_report()
-        assert len(data["weak_areas"]) == 0
+        assert len(data["weak_areas"]) == 30  # Ch13-18 共 30 关未完成
 
     # ---- 验证称号 ----
 
@@ -1550,20 +1558,25 @@ class TestE2EJourney:
     # ---- 验证学习建议 ----
 
     def test_report_no_recommendations(self):
-        """全部 100% -> 无学习建议"""
+        """Ch13-18 未完成 -> 有学习建议"""
         data = self._generate_report()
-        assert len(data["recommendations"]) == 0
+        assert len(data["recommendations"]) > 0  # 未完成章节会有建议
 
     # ---- 验证章节统计 ----
 
     def test_report_all_chapters_complete(self):
-        """所有章节 100% 完成"""
+        """Ch1-12 章节 100% 完成，Ch13-18 未完成"""
         data = self._generate_report()
         for ch_id in ["ch01", "ch02", "ch03", "ch04", "ch05", "ch06", "ch07", "ch08", "ch09", "ch10", "ch11", "ch12"]:
             ch = data["chapter_stats"][ch_id]
             assert ch["total"] == 5
             assert ch["completed"] == 5
             assert ch["rate"] == 1.0
+        for ch_id in ["ch13", "ch14", "ch15", "ch16", "ch17", "ch18"]:
+            ch = data["chapter_stats"][ch_id]
+            assert ch["total"] == 5
+            assert ch["completed"] == 0
+            assert ch["rate"] == 0.0
 
     # ---- 验证时间统计 ----
 

@@ -45,6 +45,8 @@ class ClusterState:
     priorityclasses: dict[str, dict] = field(default_factory=dict)
     customresourcedefinitions: dict[str, dict] = field(default_factory=dict)
     serviceaccounts: dict[str, dict] = field(default_factory=dict)
+    # v0.7: Ch17-Ch18 自定义资源实例
+    customresources: dict[str, dict] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -254,7 +256,8 @@ def apply_manifest(state: ClusterState, yaml_text: str) -> ClusterState:
         elif kind == "ServiceAccount":
             _apply_serviceaccount(state, doc)
         else:
-            raise K8sError(f"不支持的资源类型：{kind}（支持 Pod/Deployment/Service/ConfigMap/Secret/PV/PVC/Node/Job/CronJob/StatefulSet/Role/RoleBinding/ClusterRole/ClusterRoleBinding/HPA/Ingress/NetworkPolicy/DaemonSet/Namespace/ResourceQuota/LimitRange/PodDisruptionBudget/PriorityClass/CRD/ServiceAccount）")
+            # 尝试作为自定义资源（CRD 实例）处理
+            _apply_customresource(state, doc)
 
     return state
 
@@ -793,7 +796,10 @@ def _apply_networkpolicy(state: ClusterState, doc: dict) -> None:
 # ---------------------------------------------------------------------------
 
 def _apply_daemonset(state: ClusterState, doc: dict) -> None:
-    """DaemonSet: 验证并存储，为每个 Node 创建一个 Pod。"""
+    """DaemonSet: 验证并存储，为每个匹配的 Node 创建一个 Pod。
+
+    如果 Pod 模板中包含 nodeSelector，则只在标签匹配的 Node 上创建 Pod。
+    """
     metadata = doc.get("metadata")
     if not isinstance(metadata, dict) or "name" not in metadata:
         raise K8sError("DaemonSet 缺少 metadata.name")
@@ -813,23 +819,34 @@ def _apply_daemonset(state: ClusterState, doc: dict) -> None:
     name = metadata["name"]
     state.daemonsets[name] = doc
 
-    # 清理旧 Pod
+    # 清理旧 Pod（该 DaemonSet 创建的）
     old_pods = [pn for pn, p in state.pods.items()
                 if isinstance(p.get("metadata", {}).get("labels", {}), dict)
                 and p["metadata"]["labels"].get("daemonset") == name]
     for pn in old_pods:
         del state.pods[pn]
 
-    # 为每个 Node 创建一个 Pod
-    tmpl_spec_copy = template.get("spec", {"containers": []})
-    for node_name in state.nodes:
+    # 获取 nodeSelector（如果有），用于过滤目标节点
+    node_selector = tmpl_spec.get("nodeSelector", {})
+    if not isinstance(node_selector, dict):
+        node_selector = {}
+
+    # 为每个匹配的 Node 创建一个 Pod
+    tmpl_spec_ref = template.get("spec", {"containers": []})
+    for node_name, node_doc in state.nodes.items():
+        # 检查 Node 是否匹配 nodeSelector
+        node_labels = node_doc.get("metadata", {}).get("labels", {})
+        if not isinstance(node_labels, dict):
+            node_labels = {}
+        if not all(node_labels.get(k) == v for k, v in node_selector.items()):
+            continue
         pod_name = f"{name}-{node_name}"
         pod_labels = dict(template.get("metadata", {}).get("labels", {}))
         pod_labels["daemonset"] = name
         pod_doc = {
             "apiVersion": "v1", "kind": "Pod",
             "metadata": {"name": pod_name, "labels": pod_labels},
-            "spec": tmpl_spec_copy,
+            "spec": tmpl_spec_ref,
         }
         state.pods[pod_name] = pod_doc
 
@@ -891,7 +908,10 @@ def _apply_priorityclass(state: ClusterState, doc: dict) -> None:
 
 
 def _apply_crd(state: ClusterState, doc: dict) -> None:
-    """CustomResourceDefinition: 验证并存储。"""
+    """CustomResourceDefinition: 验证并存储。
+
+    校验 metadata.name / spec.group / spec.names / spec.versions。
+    """
     metadata = doc.get("metadata")
     if not isinstance(metadata, dict) or "name" not in metadata:
         raise K8sError("CustomResourceDefinition 缺少 metadata.name")
@@ -904,11 +924,68 @@ def _apply_crd(state: ClusterState, doc: dict) -> None:
     group = spec.get("group")
     if not isinstance(group, str) or not group:
         raise K8sError("CustomResourceDefinition 缺少 spec.group")
+    versions = spec.get("versions")
+    if not isinstance(versions, list) or not versions:
+        raise K8sError("CustomResourceDefinition 缺少 spec.versions（必须是非空列表）")
+    for i, v in enumerate(versions):
+        if not isinstance(v, dict):
+            raise K8sError(f"spec.versions[{i}] 必须是映射（dict）")
+        if "name" not in v:
+            raise K8sError(f"spec.versions[{i}] 缺少 name")
     state.customresourcedefinitions[metadata["name"]] = doc
 
 
 def _apply_serviceaccount(state: ClusterState, doc: dict) -> None:
+    """ServiceAccount: 验证并存储。
+
+    校验 metadata.name；metadata.namespace 可选（默认 default）。
+    """
     metadata = doc.get("metadata")
     if not isinstance(metadata, dict) or "name" not in metadata:
         raise K8sError("ServiceAccount 缺少 metadata.name")
+    namespace = metadata.get("namespace", "default")
+    if not isinstance(namespace, str):
+        raise K8sError("ServiceAccount metadata.namespace 必须是字符串")
     state.serviceaccounts[metadata["name"]] = doc
+
+
+def _apply_customresource(state: ClusterState, doc: dict) -> None:
+    """自定义资源实例（CR）：根据已注册的 CRD 验证并存储。
+
+    当 apply_manifest 遇到未知 kind 时调用此函数。遍历所有已注册 CRD，
+    按 spec.names.kind + spec.group 匹配 apiVersion（group/version）。
+    匹配成功则存储到 state.customresources；失败则抛出 K8sError。
+    """
+    kind = doc.get("kind")
+    api_version = doc.get("apiVersion", "")
+
+    # 解析 apiVersion: "<group>/<version>" 或 "<version>"（核心资源无 group）
+    if "/" in api_version:
+        group = api_version.split("/")[0]
+    else:
+        group = ""
+
+    # 遍历已注册 CRD 查找匹配
+    for crd_name, crd in state.customresourcedefinitions.items():
+        crd_spec = crd.get("spec", {})
+        if not isinstance(crd_spec, dict):
+            continue
+        crd_names = crd_spec.get("names", {})
+        if not isinstance(crd_names, dict):
+            continue
+        crd_kind = crd_names.get("kind")
+        crd_group = crd_spec.get("group", "")
+        if crd_kind == kind and crd_group == group:
+            # 匹配到 CRD，验证 CR metadata
+            metadata = doc.get("metadata")
+            if not isinstance(metadata, dict) or "name" not in metadata:
+                raise K8sError(f"{kind} 缺少 metadata.name")
+            namespace = metadata.get("namespace", "default")
+            cr_key = f"{namespace}/{metadata['name']}"
+            state.customresources[cr_key] = doc
+            return
+
+    raise K8sError(
+        f"不支持的资源类型：{kind}（apiVersion: {api_version}）。"
+        f"如需创建自定义资源，请先注册对应的 CRD。"
+    )
