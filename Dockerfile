@@ -1,7 +1,7 @@
 # k8s-quest/Dockerfile
-# 🍒 K8s Quest - 单容器全栈部署 (v0.3)
-# 构建: docker build -t k8s-quest:0.3 .
-# 运行: docker run -d --name k8s-quest -p 8000:8000 k8s-quest:0.3
+# 🍒 K8s Quest - 单容器全栈部署 (v0.5)
+# 构建: docker build -t k8s-quest:0.5 .
+# 运行: docker run -d --name k8s-quest -p 8000:8000 k8s-quest:0.5
 
 FROM python:3.11-slim
 

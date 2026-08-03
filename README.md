@@ -29,8 +29,16 @@
 
 ## 🚀 快速开始
 
+> ⚠️ **重要**：前端 JS 库（Alpine.js/marked/confetti）已本地化到 `frontend/vendor/`，**不依赖任何外网 CDN**，国内部署无空白页问题。
+
 ### 本地开发（秒级试玩）
 
+```bash
+cd ~/k8s-quest
+./setup.sh --dev
+```
+
+或手动：
 ```bash
 cd ~/k8s-quest/backend
 python3.11 -m venv .venv
@@ -42,12 +50,23 @@ python3.11 -m venv .venv
 
 浏览器打开 http://localhost:8000
 
+### 集群模式（连接真实 K8s）
+
+```bash
+cd ~/k8s-quest
+./setup.sh --cluster
+# 然后启动:
+K8S_QUEST_MODE=cluster cd backend && .venv/bin/uvicorn app.main:app --port 8000
+```
+
+需要：kubectl 已安装 + KUBECONFIG 已配置。每关有 [📖 知识讲解] [✏️ 动手练习] [🔧 集群实战] 三个 Tab。
+
 ### Docker 一键部署
 
 ```bash
 cd ~/k8s-quest
-docker build -t k8s-quest:0.3 .
-docker run -d --name k8s-quest --restart unless-stopped -p 8000:8000 k8s-quest:0.3
+docker build -t k8s-quest:0.5 .
+docker run -d --name k8s-quest --restart unless-stopped -p 8000:8000 k8s-quest:0.5
 curl http://localhost:8000/api/health
 ```
 
@@ -66,12 +85,18 @@ cd ~/k8s-quest/backend
 
 | 章节 | 图标 | 关卡 | 学习目标 |
 |------|------|------|----------|
-| Ch1: Pod 基础 | 🌱 | Q1.1-Q1.4 | 创建、标签、多容器、资源限制 |
-| Ch2: Deployment | 🚀 | Q2.1-Q2.4 | 副本管理、扩缩容、滚动更新、回滚 |
-| Ch3: Service 网络 | 🔗 | Q3.1-Q3.4 | ClusterIP、NodePort、DNS、Headless |
-| Ch4: 配置管理 | ⚙️ | Q4.1-Q4.4 | ConfigMap 创建/注入/挂载、Secret |
-| Ch5: 存储 | 💾 | Q5.1-Q5.4 | PV/PVC、Pod 挂载、emptyDir |
-| Ch6: 调度 | 🎯 | Q6.1-Q6.4 | nodeSelector、Affinity、Taints、资源调度 |
+| Ch1: Pod 基础 | 🌱 | Q1.1-Q1.5 | 创建、标签、多容器、资源限制、集群实战 |
+| Ch2: Deployment | 🚀 | Q2.1-Q2.5 | 副本管理、扩缩容、滚动更新、回滚、集群实战 |
+| Ch3: Service 网络 | 🔗 | Q3.1-Q3.5 | ClusterIP、NodePort、DNS、Headless、集群实战 |
+| Ch4: 配置管理 | ⚙️ | Q4.1-Q4.5 | ConfigMap 创建/注入/挂载、Secret、集群实战 |
+| Ch5: 存储 | 💾 | Q5.1-Q5.5 | PV/PVC、Pod 挂载、emptyDir、集群实战 |
+| Ch6: 调度 | 🎯 | Q6.1-Q6.5 | nodeSelector、Affinity、Taints、资源调度、集群实战 |
+| Ch7: Job/CronJob | 📋 | Q7.1-Q7.5 | 一次性任务、并行执行、定时任务、并发策略、集群实战 |
+| Ch8: StatefulSet | 🗄️ | Q8.1-Q8.5 | 有状态应用、扩缩容、Headless+STS、持久化、集群实战 |
+| Ch9: RBAC | 🔐 | Q9.1-Q9.5 | Role、RoleBinding、ClusterRole、CRB、集群实战 |
+| Ch10: HPA | 📈 | Q10.1-Q10.5 | CPU阈值、扩缩容配置、多指标、行为配置、集群实战 |
+| Ch11: Ingress | 🌐 | Q11.1-Q11.5 | 单路由、多域名、路径路由、TLS、集群实战 |
+| Ch12: NetworkPolicy | 🛡️ | Q12.1-Q12.5 | 默认拒绝、命名空间隔离、Pod白名单、双向控制、集群实战 |
 
 ## 🎮 游戏化系统
 

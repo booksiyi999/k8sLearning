@@ -36,6 +36,15 @@ class ClusterState:
     horizontalpodautoscalers: dict[str, dict] = field(default_factory=dict)
     ingresses: dict[str, dict] = field(default_factory=dict)
     networkpolicies: dict[str, dict] = field(default_factory=dict)
+    # v0.6: Ch13-Ch28 新增资源类型
+    daemonsets: dict[str, dict] = field(default_factory=dict)
+    namespaces: dict[str, dict] = field(default_factory=dict)
+    resourcequotas: dict[str, dict] = field(default_factory=dict)
+    limitranges: dict[str, dict] = field(default_factory=dict)
+    poddisruptionbudgets: dict[str, dict] = field(default_factory=dict)
+    priorityclasses: dict[str, dict] = field(default_factory=dict)
+    customresourcedefinitions: dict[str, dict] = field(default_factory=dict)
+    serviceaccounts: dict[str, dict] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -228,8 +237,24 @@ def apply_manifest(state: ClusterState, yaml_text: str) -> ClusterState:
             _apply_ingress(state, doc)
         elif kind == "NetworkPolicy":
             _apply_networkpolicy(state, doc)
+        elif kind == "DaemonSet":
+            _apply_daemonset(state, doc)
+        elif kind == "Namespace":
+            _apply_namespace(state, doc)
+        elif kind == "ResourceQuota":
+            _apply_resourcequota(state, doc)
+        elif kind == "LimitRange":
+            _apply_limitrange(state, doc)
+        elif kind == "PodDisruptionBudget":
+            _apply_pdb(state, doc)
+        elif kind == "PriorityClass":
+            _apply_priorityclass(state, doc)
+        elif kind == "CustomResourceDefinition":
+            _apply_crd(state, doc)
+        elif kind == "ServiceAccount":
+            _apply_serviceaccount(state, doc)
         else:
-            raise K8sError(f"不支持的资源类型：{kind}（支持 Pod/Deployment/Service/ConfigMap/Secret/PV/PVC/Node/Job/CronJob/StatefulSet/Role/RoleBinding/ClusterRole/ClusterRoleBinding/HPA/Ingress/NetworkPolicy）")
+            raise K8sError(f"不支持的资源类型：{kind}（支持 Pod/Deployment/Service/ConfigMap/Secret/PV/PVC/Node/Job/CronJob/StatefulSet/Role/RoleBinding/ClusterRole/ClusterRoleBinding/HPA/Ingress/NetworkPolicy/DaemonSet/Namespace/ResourceQuota/LimitRange/PodDisruptionBudget/PriorityClass/CRD/ServiceAccount）")
 
     return state
 
@@ -761,3 +786,129 @@ def _apply_networkpolicy(state: ClusterState, doc: dict) -> None:
         raise K8sError("NetworkPolicy 缺少 spec")
     name = metadata["name"]
     state.networkpolicies[name] = doc
+
+
+# ---------------------------------------------------------------------------
+# v0.6: Ch13-Ch28 新增资源类型
+# ---------------------------------------------------------------------------
+
+def _apply_daemonset(state: ClusterState, doc: dict) -> None:
+    """DaemonSet: 验证并存储，为每个 Node 创建一个 Pod。"""
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict) or "name" not in metadata:
+        raise K8sError("DaemonSet 缺少 metadata.name")
+    spec = doc.get("spec")
+    if not isinstance(spec, dict):
+        raise K8sError("DaemonSet 缺少 spec")
+    template = spec.get("template")
+    if not isinstance(template, dict) or not template:
+        raise K8sError("DaemonSet 缺少 spec.template")
+    tmpl_spec = template.get("spec")
+    if not isinstance(tmpl_spec, dict):
+        raise K8sError("DaemonSet 缺少 spec.template.spec")
+    containers = tmpl_spec.get("containers")
+    if not isinstance(containers, list) or not containers:
+        raise K8sError("DaemonSet 缺少 spec.template.spec.containers")
+
+    name = metadata["name"]
+    state.daemonsets[name] = doc
+
+    # 清理旧 Pod
+    old_pods = [pn for pn, p in state.pods.items()
+                if isinstance(p.get("metadata", {}).get("labels", {}), dict)
+                and p["metadata"]["labels"].get("daemonset") == name]
+    for pn in old_pods:
+        del state.pods[pn]
+
+    # 为每个 Node 创建一个 Pod
+    tmpl_spec_copy = template.get("spec", {"containers": []})
+    for node_name in state.nodes:
+        pod_name = f"{name}-{node_name}"
+        pod_labels = dict(template.get("metadata", {}).get("labels", {}))
+        pod_labels["daemonset"] = name
+        pod_doc = {
+            "apiVersion": "v1", "kind": "Pod",
+            "metadata": {"name": pod_name, "labels": pod_labels},
+            "spec": tmpl_spec_copy,
+        }
+        state.pods[pod_name] = pod_doc
+
+
+def _apply_namespace(state: ClusterState, doc: dict) -> None:
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict) or "name" not in metadata:
+        raise K8sError("Namespace 缺少 metadata.name")
+    state.namespaces[metadata["name"]] = doc
+
+
+def _apply_resourcequota(state: ClusterState, doc: dict) -> None:
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict) or "name" not in metadata:
+        raise K8sError("ResourceQuota 缺少 metadata.name")
+    spec = doc.get("spec", {})
+    if not isinstance(spec, dict):
+        raise K8sError("ResourceQuota 缺少 spec")
+    hard = spec.get("hard")
+    if not isinstance(hard, dict) or not hard:
+        raise K8sError("ResourceQuota 缺少 spec.hard")
+    state.resourcequotas[metadata["name"]] = doc
+
+
+def _apply_limitrange(state: ClusterState, doc: dict) -> None:
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict) or "name" not in metadata:
+        raise K8sError("LimitRange 缺少 metadata.name")
+    spec = doc.get("spec", {})
+    if not isinstance(spec, dict):
+        raise K8sError("LimitRange 缺少 spec")
+    limits = spec.get("limits")
+    if not isinstance(limits, list) or not limits:
+        raise K8sError("LimitRange 缺少 spec.limits")
+    state.limitranges[metadata["name"]] = doc
+
+
+def _apply_pdb(state: ClusterState, doc: dict) -> None:
+    """PodDisruptionBudget: 验证并存储。"""
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict) or "name" not in metadata:
+        raise K8sError("PodDisruptionBudget 缺少 metadata.name")
+    spec = doc.get("spec", {})
+    if not isinstance(spec, dict):
+        raise K8sError("PodDisruptionBudget 缺少 spec")
+    if "minAvailable" not in spec and "maxUnavailable" not in spec:
+        raise K8sError("PodDisruptionBudget 需要 spec.minAvailable 或 spec.maxUnavailable")
+    state.poddisruptionbudgets[metadata["name"]] = doc
+
+
+def _apply_priorityclass(state: ClusterState, doc: dict) -> None:
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict) or "name" not in metadata:
+        raise K8sError("PriorityClass 缺少 metadata.name")
+    value = doc.get("value")
+    if not isinstance(value, int):
+        raise K8sError("PriorityClass 缺少 value（必须是整数）")
+    state.priorityclasses[metadata["name"]] = doc
+
+
+def _apply_crd(state: ClusterState, doc: dict) -> None:
+    """CustomResourceDefinition: 验证并存储。"""
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict) or "name" not in metadata:
+        raise K8sError("CustomResourceDefinition 缺少 metadata.name")
+    spec = doc.get("spec", {})
+    if not isinstance(spec, dict):
+        raise K8sError("CustomResourceDefinition 缺少 spec")
+    names = spec.get("names")
+    if not isinstance(names, dict):
+        raise K8sError("CustomResourceDefinition 缺少 spec.names")
+    group = spec.get("group")
+    if not isinstance(group, str) or not group:
+        raise K8sError("CustomResourceDefinition 缺少 spec.group")
+    state.customresourcedefinitions[metadata["name"]] = doc
+
+
+def _apply_serviceaccount(state: ClusterState, doc: dict) -> None:
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict) or "name" not in metadata:
+        raise K8sError("ServiceAccount 缺少 metadata.name")
+    state.serviceaccounts[metadata["name"]] = doc
