@@ -25,6 +25,17 @@ class ClusterState:
     persistentvolumeclaims: dict[str, dict] = field(default_factory=dict)
     nodes: dict[str, dict] = field(default_factory=dict)
     revisions: dict[str, list[dict]] = field(default_factory=dict)
+    # v0.5: Ch7-Ch12 新增资源类型
+    jobs: dict[str, dict] = field(default_factory=dict)
+    cronjobs: dict[str, dict] = field(default_factory=dict)
+    statefulsets: dict[str, dict] = field(default_factory=dict)
+    roles: dict[str, dict] = field(default_factory=dict)
+    rolebindings: dict[str, dict] = field(default_factory=dict)
+    clusterroles: dict[str, dict] = field(default_factory=dict)
+    clusterrolebindings: dict[str, dict] = field(default_factory=dict)
+    horizontalpodautoscalers: dict[str, dict] = field(default_factory=dict)
+    ingresses: dict[str, dict] = field(default_factory=dict)
+    networkpolicies: dict[str, dict] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -197,8 +208,28 @@ def apply_manifest(state: ClusterState, yaml_text: str) -> ClusterState:
             _apply_pvc(state, doc)
         elif kind == "Node":
             _apply_node(state, doc)
+        elif kind == "Job":
+            _apply_job(state, doc)
+        elif kind == "CronJob":
+            _apply_cronjob(state, doc)
+        elif kind == "StatefulSet":
+            _apply_statefulset(state, doc)
+        elif kind == "Role":
+            _apply_role(state, doc)
+        elif kind == "RoleBinding":
+            _apply_rolebinding(state, doc)
+        elif kind == "ClusterRole":
+            _apply_clusterrole(state, doc)
+        elif kind == "ClusterRoleBinding":
+            _apply_clusterrolebinding(state, doc)
+        elif kind == "HorizontalPodAutoscaler":
+            _apply_hpa(state, doc)
+        elif kind == "Ingress":
+            _apply_ingress(state, doc)
+        elif kind == "NetworkPolicy":
+            _apply_networkpolicy(state, doc)
         else:
-            raise K8sError(f"不支持的资源类型：{kind}（支持 Pod/Deployment/Service/ConfigMap/Secret/PV/PVC/Node）")
+            raise K8sError(f"不支持的资源类型：{kind}（支持 Pod/Deployment/Service/ConfigMap/Secret/PV/PVC/Node/Job/CronJob/StatefulSet/Role/RoleBinding/ClusterRole/ClusterRoleBinding/HPA/Ingress/NetworkPolicy）")
 
     return state
 
@@ -536,3 +567,197 @@ def _apply_node(state: ClusterState, doc: dict) -> None:
         raise K8sError("Node 缺少 metadata.name")
     name = metadata["name"]
     state.nodes[name] = doc
+
+
+# ---------------------------------------------------------------------------
+# v0.5: Ch7-Ch12 新增资源类型
+# ---------------------------------------------------------------------------
+
+def _apply_job(state: ClusterState, doc: dict) -> None:
+    """Job: 验证并存储，同时创建对应的 Pod（模拟任务执行）。"""
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict) or "name" not in metadata:
+        raise K8sError("Job 缺少 metadata.name")
+    spec = doc.get("spec")
+    if not isinstance(spec, dict):
+        raise K8sError("Job 缺少 spec")
+    template = spec.get("template")
+    if not isinstance(template, dict) or not template:
+        raise K8sError("Job 缺少 spec.template")
+    tmpl_spec = template.get("spec")
+    if not isinstance(tmpl_spec, dict):
+        raise K8sError("Job 缺少 spec.template.spec")
+    containers = tmpl_spec.get("containers")
+    if not isinstance(containers, list) or not containers:
+        raise K8sError("Job 缺少 spec.template.spec.containers")
+
+    name = metadata["name"]
+    state.jobs[name] = doc
+
+    # 模拟: 为 Job 创建一个 Pod
+    pod_name = f"{name}-pod"
+    pod_doc = {
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {"name": pod_name, "labels": {"job-name": name}},
+        "spec": tmpl_spec,
+    }
+    state.pods[pod_name] = pod_doc
+
+
+def _apply_cronjob(state: ClusterState, doc: dict) -> None:
+    """CronJob: 验证并存储。"""
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict) or "name" not in metadata:
+        raise K8sError("CronJob 缺少 metadata.name")
+    spec = doc.get("spec")
+    if not isinstance(spec, dict):
+        raise K8sError("CronJob 缺少 spec")
+    schedule = spec.get("schedule")
+    if not isinstance(schedule, str) or not schedule:
+        raise K8sError("CronJob 缺少 spec.schedule")
+    job_template = spec.get("jobTemplate")
+    if not isinstance(job_template, dict) or not job_template:
+        raise K8sError("CronJob 缺少 spec.jobTemplate")
+
+    name = metadata["name"]
+    state.cronjobs[name] = doc
+
+
+def _apply_statefulset(state: ClusterState, doc: dict) -> None:
+    """StatefulSet: 验证并存储，同时创建有序 Pod（statefulset-0, statefulset-1, ...）。"""
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict) or "name" not in metadata:
+        raise K8sError("StatefulSet 缺少 metadata.name")
+    spec = doc.get("spec")
+    if not isinstance(spec, dict):
+        raise K8sError("StatefulSet 缺少 spec")
+    replicas = spec.get("replicas", 1)
+    if isinstance(replicas, bool) or not isinstance(replicas, int):
+        raise K8sError("StatefulSet spec.replicas 必须是整数")
+    if replicas < 0 or replicas > 100:
+        raise K8sError(f"StatefulSet spec.replicas 超出合理范围 (0-100), 实际 {replicas}")
+    template = spec.get("template")
+    if not isinstance(template, dict) or not template:
+        raise K8sError("StatefulSet 缺少 spec.template")
+    # StatefulSet 需要 serviceName
+    service_name = spec.get("serviceName")
+    if not isinstance(service_name, str) or not service_name:
+        raise K8sError("StatefulSet 缺少 spec.serviceName（Headless Service 名称）")
+
+    name = metadata["name"]
+    state.statefulsets[name] = doc
+
+    # 清理旧 Pod（该 StatefulSet 创建的）
+    old_pods = [pn for pn, p in state.pods.items()
+                if isinstance(p.get("metadata", {}).get("labels", {}), dict)
+                and p["metadata"]["labels"].get("controller") == name]
+    for pn in old_pods:
+        del state.pods[pn]
+
+    # 模拟: 创建有序 Pod (sts-name-0, sts-name-1, ...)
+    tmpl_spec = template.get("spec", {"containers": []})
+    for i in range(replicas):
+        pod_name = f"{name}-{i}"
+        pod_labels = dict(template.get("metadata", {}).get("labels", {}))
+        pod_labels["controller"] = name
+        pod_doc = {
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {"name": pod_name, "labels": pod_labels},
+            "spec": tmpl_spec,
+        }
+        state.pods[pod_name] = pod_doc
+
+
+def _apply_role(state: ClusterState, doc: dict) -> None:
+    """Role: 验证并存储。"""
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict) or "name" not in metadata:
+        raise K8sError("Role 缺少 metadata.name")
+    rules = doc.get("spec", {}).get("rules") or doc.get("rules")
+    if not isinstance(rules, list):
+        raise K8sError("Role 缺少 rules（必须是列表）")
+    name = metadata["name"]
+    state.roles[name] = doc
+
+
+def _apply_rolebinding(state: ClusterState, doc: dict) -> None:
+    """RoleBinding: 验证并存储。"""
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict) or "name" not in metadata:
+        raise K8sError("RoleBinding 缺少 metadata.name")
+    role_ref = doc.get("roleRef")
+    if not isinstance(role_ref, dict):
+        raise K8sError("RoleBinding 缺少 roleRef")
+    name = metadata["name"]
+    state.rolebindings[name] = doc
+
+
+def _apply_clusterrole(state: ClusterState, doc: dict) -> None:
+    """ClusterRole: 验证并存储。"""
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict) or "name" not in metadata:
+        raise K8sError("ClusterRole 缺少 metadata.name")
+    rules = doc.get("rules")
+    if not isinstance(rules, list):
+        raise K8sError("ClusterRole 缺少 rules（必须是列表）")
+    name = metadata["name"]
+    state.clusterroles[name] = doc
+
+
+def _apply_clusterrolebinding(state: ClusterState, doc: dict) -> None:
+    """ClusterRoleBinding: 验证并存储。"""
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict) or "name" not in metadata:
+        raise K8sError("ClusterRoleBinding 缺少 metadata.name")
+    role_ref = doc.get("roleRef")
+    if not isinstance(role_ref, dict):
+        raise K8sError("ClusterRoleBinding 缺少 roleRef")
+    name = metadata["name"]
+    state.clusterrolebindings[name] = doc
+
+
+def _apply_hpa(state: ClusterState, doc: dict) -> None:
+    """HorizontalPodAutoscaler: 验证并存储。"""
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict) or "name" not in metadata:
+        raise K8sError("HorizontalPodAutoscaler 缺少 metadata.name")
+    spec = doc.get("spec")
+    if not isinstance(spec, dict):
+        raise K8sError("HorizontalPodAutoscaler 缺少 spec")
+    target = spec.get("scaleTargetRef")
+    if not isinstance(target, dict):
+        raise K8sError("HorizontalPodAutoscaler 缺少 spec.scaleTargetRef")
+    max_replicas = spec.get("maxReplicas")
+    if not isinstance(max_replicas, int) or max_replicas < 1:
+        raise K8sError("HorizontalPodAutoscaler spec.maxReplicas 必须是正整数")
+    name = metadata["name"]
+    state.horizontalpodautoscalers[name] = doc
+
+
+def _apply_ingress(state: ClusterState, doc: dict) -> None:
+    """Ingress: 验证并存储。"""
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict) or "name" not in metadata:
+        raise K8sError("Ingress 缺少 metadata.name")
+    spec = doc.get("spec")
+    if not isinstance(spec, dict):
+        raise K8sError("Ingress 缺少 spec")
+    rules = spec.get("rules")
+    if not isinstance(rules, list):
+        raise K8sError("Ingress 缺少 spec.rules（必须是列表）")
+    name = metadata["name"]
+    state.ingresses[name] = doc
+
+
+def _apply_networkpolicy(state: ClusterState, doc: dict) -> None:
+    """NetworkPolicy: 验证并存储。"""
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict) or "name" not in metadata:
+        raise K8sError("NetworkPolicy 缺少 metadata.name")
+    spec = doc.get("spec")
+    if not isinstance(spec, dict):
+        raise K8sError("NetworkPolicy 缺少 spec")
+    name = metadata["name"]
+    state.networkpolicies[name] = doc

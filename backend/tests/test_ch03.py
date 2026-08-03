@@ -679,4 +679,4 @@ class TestChapter3Registration:
 
     def test_total_levels(self):
         levels = list_levels()
-        assert len(levels) == 30
+        assert len(levels) == 60

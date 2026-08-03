@@ -41,10 +41,19 @@ def get_level(level_id: str) -> Level | None:
     from app.levels.ch04_configmap import CHAPTER_4_LEVELS
     from app.levels.ch05_storage import CHAPTER_5_LEVELS
     from app.levels.ch06_scheduling import CHAPTER_6_LEVELS
+    from app.levels.ch07_job_cronjob import CHAPTER_7_LEVELS
+    from app.levels.ch08_statefulset import CHAPTER_8_LEVELS
+    from app.levels.ch09_rbac import CHAPTER_9_LEVELS
+    from app.levels.ch10_hpa import CHAPTER_10_LEVELS
+    from app.levels.ch11_ingress import CHAPTER_11_LEVELS
+    from app.levels.ch12_networkpolicy import CHAPTER_12_LEVELS
     from app.levels.cluster_practice import CLUSTER_PRACTICE_LEVELS
     all_levels = (
         CHAPTER_1_LEVELS + CHAPTER_2_LEVELS + CHAPTER_3_LEVELS
         + CHAPTER_4_LEVELS + CHAPTER_5_LEVELS + CHAPTER_6_LEVELS
+        + CHAPTER_7_LEVELS + CHAPTER_8_LEVELS
+        + CHAPTER_9_LEVELS + CHAPTER_10_LEVELS + CHAPTER_11_LEVELS
+        + CHAPTER_12_LEVELS
         + CLUSTER_PRACTICE_LEVELS
     )
     for lv in all_levels:
@@ -61,10 +70,19 @@ def list_levels(chapter: str | None = None) -> list[dict]:
     from app.levels.ch04_configmap import CHAPTER_4_LEVELS
     from app.levels.ch05_storage import CHAPTER_5_LEVELS
     from app.levels.ch06_scheduling import CHAPTER_6_LEVELS
+    from app.levels.ch07_job_cronjob import CHAPTER_7_LEVELS
+    from app.levels.ch08_statefulset import CHAPTER_8_LEVELS
+    from app.levels.ch09_rbac import CHAPTER_9_LEVELS
+    from app.levels.ch10_hpa import CHAPTER_10_LEVELS
+    from app.levels.ch11_ingress import CHAPTER_11_LEVELS
+    from app.levels.ch12_networkpolicy import CHAPTER_12_LEVELS
     from app.levels.cluster_practice import CLUSTER_PRACTICE_LEVELS
     all_levels = (
         CHAPTER_1_LEVELS + CHAPTER_2_LEVELS + CHAPTER_3_LEVELS
         + CHAPTER_4_LEVELS + CHAPTER_5_LEVELS + CHAPTER_6_LEVELS
+        + CHAPTER_7_LEVELS + CHAPTER_8_LEVELS
+        + CHAPTER_9_LEVELS + CHAPTER_10_LEVELS + CHAPTER_11_LEVELS
+        + CHAPTER_12_LEVELS
         + CLUSTER_PRACTICE_LEVELS
     )
     if chapter is not None:

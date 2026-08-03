@@ -192,7 +192,8 @@ async def api_generate_report(req: ReportRequest):
     # 8. 章节完成情况
     chapter_stats = {}
     for ch_id, ch_meta in CHAPTERS_META.items():
-        ch_levels = [lid for lid in KNOWLEDGE_POINTS if lid.startswith(f"Q{ch_id[-1]}.")]
+        ch_num = int(ch_id[2:])
+        ch_levels = [lid for lid in KNOWLEDGE_POINTS if lid.startswith(f"Q{ch_num}.")]
         ch_completed = [lid for lid in ch_levels if lid in completed]
         chapter_stats[ch_id] = {
             "title": ch_meta["title"],
