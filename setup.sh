@@ -1,8 +1,9 @@
 #!/bin/bash
 # 🍒 K8s Quest 一键安装脚本
-# 用法: ./setup.sh [--docker | --dev]
-# --docker: Docker 部署（默认）
-# --dev: 本地开发模式
+# 用法: ./setup.sh [--docker | --dev | --cluster]
+# --docker:  Docker 部署（默认）
+# --dev:     本地开发模式（模拟器）
+# --cluster: 集群模式（连接真实 K8s）
 
 set -e
 
@@ -75,9 +76,50 @@ elif [ "$MODE" = "--dev" ]; then
     echo "🚀 启动开发服务器: cd backend && .venv/bin/uvicorn app.main:app --reload --port 8000"
     echo "🌐 浏览器打开: http://localhost:8000"
 
+elif [ "$MODE" = "--cluster" ]; then
+    # 集群模式（连接真实 K8s）
+    BACKEND_DIR="$PROJECT_DIR/backend"
+
+    if ! command -v python3.11 &> /dev/null; then
+        echo "❌ Python 3.11 未安装"
+        exit 1
+    fi
+
+    if ! command -v kubectl &> /dev/null; then
+        echo "❌ kubectl 未安装，集群模式需要 kubectl"
+        echo "   安装: https://kubernetes.io/docs/tasks/tools/"
+        exit 1
+    fi
+
+    if [ -z "$KUBECONFIG" ] && [ ! -f "$HOME/.kube/config" ]; then
+        echo "❌ 未找到 kubeconfig，请设置 KUBECONFIG 环境变量"
+        echo "   export KUBECONFIG=/path/to/kubeconfig"
+        exit 1
+    fi
+
+    echo "🐍 创建 Python 虚拟环境..."
+    cd "$BACKEND_DIR"
+    python3.11 -m venv .venv 2>/dev/null || true
+
+    echo "📦 安装依赖..."
+    .venv/bin/pip install -e ".[dev]" -q
+
+    echo "🔧 验证集群连接..."
+    kubectl get nodes --request-timeout=5s || {
+        echo "❌ 无法连接到 K8s 集群，请检查 kubeconfig"
+        exit 1
+    }
+
+    echo ""
+    echo "✅ 集群模式就绪！"
+    echo "🚀 启动: K8S_QUEST_MODE=cluster .venv/bin/uvicorn app.main:app --reload --port 8000"
+    echo "🌐 浏览器打开: http://localhost:8000"
+    echo "📖 每关有 [知识讲解] [动手练习] [集群实战] 三个 Tab"
+
 else
-    echo "用法: ./setup.sh [--docker | --dev]"
-    echo "  --docker  Docker 部署（默认）"
-    echo "  --dev     本地开发模式"
+    echo "用法: ./setup.sh [--docker | --dev | --cluster]"
+    echo "  --docker   Docker 部署（默认）"
+    echo "  --dev      本地开发模式（模拟器）"
+    echo "  --cluster  集群模式（连接真实 K8s）"
     exit 1
 fi

@@ -1,28 +1,31 @@
 # 🍒 K8s Quest
 
-> 樱桃的 K8s 闯关学习 App — 6 章 24 关，从零到 K8s 实战
+> 樱桃的 K8s 闯关学习 App - 6 章 30 关，从零到 K8s 实战（含真实集群模式）
 
 ## 📊 当前状态
 
-**v0.3 - 游戏化学习体验** | 6 章 24 关 · 189 测试全绿 · 前端游戏化已完成
+**v0.4 - 教学模式 + 真实集群** | 6 章 30 关 · 701 测试全绿 · 教学Tab + 集群实战
 
 | 维度 | 数据 |
 |------|------|
 | 章节数 | 6 章（Pod / Deployment / Service / ConfigMap / Storage / Scheduling） |
-| 关卡数 | 24 关（每章 4 关） |
-| 功能测试 | 593 passed, 0 failed (461功能 + 132 QA攻击) |
-| QA 攻击测试 | 132 passed（3轮：88后端 + 44前端，0应用bug） |
-| 后端 | FastAPI + PyYAML 模拟器 |
-| 前端 | Alpine.js 单页（游戏化已完成） |
+| 关卡数 | 30 关（每章 5 关：4 模拟器 + 1 集群实战） |
+| 功能测试 | 701 passed, 0 failed |
+| 教学文档 | 30 关全部含 Lesson（概念/关键字段/图解/示例/常见错误/建议） |
+| 集群模式 | 可选，K8S_QUEST_MODE=cluster + KUBECONFIG 启用 |
+| 后端 | FastAPI + PyYAML 模拟器 + kubectl 集群连接 |
+| 前端 | Alpine.js 单页（教学Tab / 练习Tab / 集群实战Tab） |
 
 ## ✨ 特性
 
+- 📖 **教学模式**：每关含知识点讲解（概念/关键字段/图解/示例YAML/常见错误/学习建议）
+- 🔧 **真实集群模式**：可选连接真实 K8s 集群，kubectl apply 部署 + 资源查看 + Pod 日志 + 连通性测试
 - 🎮 **游戏化闯关**：XP 系统、等级称号、连击计数、徽章成就
-- 🎯 **模拟器闯关**：纯 YAML 校验，零集群成本
+- 🎯 **双模式校验**：模拟器模式（零依赖）+ 集群模式（真实 K8s）
 - 📊 **结业报告**：知识掌握度分析、薄弱项识别、成绩评定
 - 🚀 **单进程架构**：FastAPI 同时服务 API + 前端
-- 🧪 **TDD + Loop Engineering**：593 测试（含 E2E 旅程 + 前端逻辑 + QA 攻击）
-- 📦 **一键部署**：Docker / systemd / 本地开发
+- 🧪 **TDD + Loop Engineering**：701 测试（含 E2E + 前端逻辑 + QA 攻击 + 集群模块）
+- 📦 **一键部署**：Docker / systemd / 本地开发 / 集群模式
 
 ## 🚀 快速开始
 
@@ -109,18 +112,25 @@ cd ~/k8s-quest/backend
 | 端点 | 方法 | 用途 |
 |------|------|------|
 | `/api/health` | GET | 健康检查 |
-| `/api/levels` | GET | 关卡列表 |
+| `/api/levels` | GET | 关卡列表（30 关） |
 | `/api/level/{id}` | GET | 关卡详情（含知识点、XP） |
-| `/api/check` | POST | 提交 YAML 答案校验 |
+| `/api/lesson/{id}` | GET | 教学文档（概念/关键字段/图解/示例/常见错误） |
+| `/api/check` | POST | 模拟器 YAML 校验 |
+| `/api/deploy` | POST | 双模式部署（模拟器 or 真实集群） |
 | `/api/meta` | GET | 游戏化元数据（章节/知识点/XP/称号） |
 | `/api/report` | POST | 生成结业报告 |
+| `/api/cluster/status` | GET | 集群连接状态 |
+| `/api/resources` | GET | 集群资源列表（kubectl get） |
+| `/api/logs/{pod}` | GET | Pod 日志（kubectl logs） |
+| `/api/test-connectivity` | POST | Service 连通性测试 |
 
 ## 🗺️ 路线图
 
 - ✅ v0.1: MVP 单关 demo（Pod 创建）
 - ✅ v0.2: 12 关完整课程（Pod + Deployment + Service）
 - ✅ v0.3: 24 关 + 游戏化 + 结业报告
-- 🔜 v0.4: 集群状态可视化 + AI 答题助手
+- ✅ v0.4: 教学模式 + 真实集群连接 + 30 关 + 701 测试
+- 🔜 v0.5: AI 答题助手 + 集群状态实时刷新
 - 🔜 v1.0: 用户系统 + 进度云端同步 + CKA 模拟器
 
 ## 团队
