@@ -478,7 +478,7 @@ def _check_183_security_context(user_yaml: str) -> CheckResult:
 
     # 检查 runAsUser（非 root 用户）
     run_as_user = container_sc.get("runAsUser", pod_sc.get("runAsUser"))
-    if run_as_user is None or run_as_user == 0:
+    if run_as_user is None or str(run_as_user) == "0":
         return CheckResult(
             ok=False,
             error="runAsUser 应设为非 0 值（非 root 用户）",
@@ -745,7 +745,7 @@ def _check_184_pss_restricted(user_yaml: str) -> CheckResult:
 
     # 2. runAsUser 非 0
     run_as_user = container_sc.get("runAsUser", pod_sc.get("runAsUser"))
-    if run_as_user is None or run_as_user == 0:
+    if run_as_user is None or str(run_as_user) == "0":
         errors.append("runAsUser 必须为非 0 值")
 
     # 3. allowPrivilegeEscalation: false
@@ -764,6 +764,18 @@ def _check_184_pss_restricted(user_yaml: str) -> CheckResult:
     seccomp = pod_sc.get("seccompProfile") or container_sc.get("seccompProfile")
     if not isinstance(seccomp, dict) or seccomp.get("type") != "RuntimeDefault":
         errors.append("seccompProfile.type 必须为 RuntimeDefault")
+
+    # 6. privileged 不能为 true
+    if container_sc.get("privileged") is True:
+        errors.append("privileged 不能为 true（PSS restricted 禁止特权容器）")
+
+    # 7. hostNetwork / hostPID / hostIPC 不能为 true
+    if spec.get("hostNetwork") is True:
+        errors.append("hostNetwork 不能为 true（PSS restricted 禁止共享主机网络）")
+    if spec.get("hostPID") is True:
+        errors.append("hostPID 不能为 true（PSS restricted 禁止共享主机 PID）")
+    if spec.get("hostIPC") is True:
+        errors.append("hostIPC 不能为 true（PSS restricted 禁止共享主机 IPC）")
 
     if errors:
         return CheckResult(

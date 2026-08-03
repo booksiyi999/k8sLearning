@@ -473,32 +473,54 @@ def _check_143_create_resourcequota(user_yaml: str) -> CheckResult:
     if not isinstance(hard, dict) or not hard:
         return CheckResult(ok=False, error="ResourceQuota 缺少 spec.hard", hints=[])
 
-    # 检查是否包含 CPU 限制
-    has_cpu = any("cpu" in str(k).lower() for k in hard.keys())
-    if not has_cpu:
+    # 检查是否包含 CPU 限制（精确匹配 requests.cpu 和 limits.cpu）
+    required_cpu_keys = ["requests.cpu", "limits.cpu"]
+    missing_cpu = [k for k in required_cpu_keys if k not in hard]
+    if missing_cpu:
         return CheckResult(
             ok=False,
             error="ResourceQuota 缺少 CPU 限制",
-            hints=["在 spec.hard 中添加 requests.cpu 和 limits.cpu"],
+            hints=[f"在 spec.hard 中添加 {', '.join(missing_cpu)}"],
         )
 
-    # 检查是否包含 Memory 限制
-    has_memory = any("memory" in str(k).lower() for k in hard.keys())
-    if not has_memory:
+    # 检查是否包含 Memory 限制（精确匹配 requests.memory 和 limits.memory）
+    required_mem_keys = ["requests.memory", "limits.memory"]
+    missing_mem = [k for k in required_mem_keys if k not in hard]
+    if missing_mem:
         return CheckResult(
             ok=False,
             error="ResourceQuota 缺少 Memory 限制",
-            hints=["在 spec.hard 中添加 requests.memory 和 limits.memory"],
+            hints=[f"在 spec.hard 中添加 {', '.join(missing_mem)}"],
         )
 
-    # 检查是否包含 Pod 数量限制
-    has_pods = any("pod" in str(k).lower() for k in hard.keys())
-    if not has_pods:
+    # 检查是否包含 Pod 数量限制（精确匹配 pods）
+    if "pods" not in hard:
         return CheckResult(
             ok=False,
             error="ResourceQuota 缺少 Pod 数量限制",
             hints=["在 spec.hard 中添加 pods: '10' 来限制 Pod 数量"],
         )
+
+    # 验证资源值为非负数
+    import re
+    def _is_negative_resource(val):
+        """Check if a resource value is negative."""
+        if isinstance(val, (int, float)):
+            return val < 0
+        if isinstance(val, str):
+            val = val.strip()
+            m = re.match(r'^(-?\d+(?:\.\d+)?)', val)
+            if m:
+                return float(m.group(1)) < 0
+        return False
+
+    for key, val in hard.items():
+        if _is_negative_resource(val):
+            return CheckResult(
+                ok=False,
+                error=f"ResourceQuota 的 '{key}' 值为负数 ({val})，资源配额必须为非负数",
+                hints=["资源配额值必须为非负数"],
+            )
 
     return CheckResult(
         ok=True, state=state,
@@ -732,6 +754,60 @@ def _check_144_create_limitrange(user_yaml: str) -> CheckResult:
             error="defaultRequest 中应同时包含 cpu 和 memory",
             hints=["defaultRequest: { cpu: '100m', memory: '128Mi' }"],
         )
+
+    # 验证 default（limits）不小于 defaultRequest（requests）
+    import re
+    def _parse_cpu(val):
+        """Parse CPU value to millicores (int). Returns None if unparseable."""
+        if isinstance(val, (int, float)):
+            return int(val * 1000)
+        if isinstance(val, str):
+            val = val.strip()
+            if val.endswith("m"):
+                try:
+                    return int(val[:-1])
+                except ValueError:
+                    return None
+            try:
+                return int(float(val) * 1000)
+            except ValueError:
+                return None
+        return None
+
+    def _parse_memory(val):
+        """Parse memory value to bytes (int). Returns None if unparseable."""
+        if isinstance(val, (int, float)):
+            return int(val)
+        if isinstance(val, str):
+            val = val.strip()
+            m = re.match(r'^(\d+(?:\.\d+)?)\s*([KMGTPE]i?)?$', val)
+            if m:
+                num = float(m.group(1))
+                unit = m.group(2) or ""
+                multipliers = {
+                    "": 1,
+                    "K": 1000, "M": 1000**2, "G": 1000**3, "T": 1000**4,
+                    "Ki": 1024, "Mi": 1024**2, "Gi": 1024**3, "Ti": 1024**4,
+                }
+                return int(num * multipliers.get(unit, 1))
+            return None
+        return None
+
+    for resource in ["cpu", "memory"]:
+        d_val = default.get(resource)
+        r_val = default_request.get(resource)
+        if resource == "cpu":
+            d_parsed = _parse_cpu(d_val)
+            r_parsed = _parse_cpu(r_val)
+        else:
+            d_parsed = _parse_memory(d_val)
+            r_parsed = _parse_memory(r_val)
+        if d_parsed is not None and r_parsed is not None and d_parsed < r_parsed:
+            return CheckResult(
+                ok=False,
+                error=f"default.{resource} ({d_val}) 不应小于 defaultRequest.{resource} ({r_val})，limits 必须大于等于 requests",
+                hints=["default（limits）必须大于等于 defaultRequest（requests）"],
+            )
 
     return CheckResult(
         ok=True, state=state,
@@ -987,7 +1063,13 @@ def _check_145_multi_team(user_yaml: str) -> CheckResult:
     lr = state.limitranges[lr_name]
     lr_spec = lr.get("spec", {})
     limits = lr_spec.get("limits", []) if isinstance(lr_spec, dict) else []
-    if isinstance(limits, list) and limits and isinstance(limits[0], dict):
+    if isinstance(limits, list) and limits:
+        if not isinstance(limits[0], dict):
+            return CheckResult(
+                ok=False,
+                error="LimitRange 的 spec.limits[0] 格式错误，应为字典",
+                hints=["limits 中的每一项应为字典类型"],
+            )
         default = limits[0].get("default")
         if not isinstance(default, dict) or not default:
             return CheckResult(

@@ -126,7 +126,7 @@ def _instantiate_pods(state: ClusterState, name: str, doc: dict) -> None:
     old_pod_names = [
         pn for pn, p in state.pods.items()
         if isinstance(p.get("metadata", {}).get("labels", {}), dict)
-        and p["metadata"]["labels"].get("pod-template-hash") == name
+        and p.get("metadata", {}).get("labels", {}).get("pod-template-hash") == name
     ]
     for pn in old_pod_names:
         del state.pods[pn]
@@ -679,7 +679,7 @@ def _apply_statefulset(state: ClusterState, doc: dict) -> None:
     # 清理旧 Pod（该 StatefulSet 创建的）
     old_pods = [pn for pn, p in state.pods.items()
                 if isinstance(p.get("metadata", {}).get("labels", {}), dict)
-                and p["metadata"]["labels"].get("controller") == name]
+                and p.get("metadata", {}).get("labels", {}).get("controller") == name]
     for pn in old_pods:
         del state.pods[pn]
 
@@ -822,7 +822,7 @@ def _apply_daemonset(state: ClusterState, doc: dict) -> None:
     # 清理旧 Pod（该 DaemonSet 创建的）
     old_pods = [pn for pn, p in state.pods.items()
                 if isinstance(p.get("metadata", {}).get("labels", {}), dict)
-                and p["metadata"]["labels"].get("daemonset") == name]
+                and p.get("metadata", {}).get("labels", {}).get("daemonset") == name]
     for pn in old_pods:
         del state.pods[pn]
 
@@ -894,6 +894,8 @@ def _apply_pdb(state: ClusterState, doc: dict) -> None:
         raise K8sError("PodDisruptionBudget 缺少 spec")
     if "minAvailable" not in spec and "maxUnavailable" not in spec:
         raise K8sError("PodDisruptionBudget 需要 spec.minAvailable 或 spec.maxUnavailable")
+    if "minAvailable" in spec and "maxUnavailable" in spec:
+        raise K8sError("PDB 不能同时设置 minAvailable 和 maxUnavailable")
     state.poddisruptionbudgets[metadata["name"]] = doc
 
 
@@ -902,7 +904,7 @@ def _apply_priorityclass(state: ClusterState, doc: dict) -> None:
     if not isinstance(metadata, dict) or "name" not in metadata:
         raise K8sError("PriorityClass 缺少 metadata.name")
     value = doc.get("value")
-    if not isinstance(value, int):
+    if isinstance(value, bool) or not isinstance(value, int):
         raise K8sError("PriorityClass 缺少 value（必须是整数）")
     state.priorityclasses[metadata["name"]] = doc
 

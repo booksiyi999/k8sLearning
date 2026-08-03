@@ -436,6 +436,20 @@ def _check_163_global_default(user_yaml: str) -> CheckResult:
             hints=["添加 value: 100000"],
         )
 
+    if isinstance(value, bool) or not isinstance(value, int):
+        return CheckResult(
+            ok=False,
+            error=f"value 必须是整数，实际为 {type(value).__name__}",
+            hints=["value 是整数类型，不需要引号"],
+        )
+
+    if value < 0:
+        return CheckResult(
+            ok=False,
+            error="value 不能为负数",
+            hints=["value 必须是非负整数"],
+        )
+
     global_default = pc.get("globalDefault")
     if global_default is not True:
         return CheckResult(
@@ -609,14 +623,25 @@ def _check_164_priority_design(user_yaml: str) -> CheckResult:
     # 查找系统级（value >= 500000）和用户级（value < 500000）
     system_pc = None
     user_pc = None
+    global_default_count = 0
     for name, pc in state.priorityclasses.items():
         value = pc.get("value")
         if not isinstance(value, int) or isinstance(value, bool):
             continue
+        # 检查是否多个 globalDefault=true
+        if pc.get("globalDefault") is True:
+            global_default_count += 1
         if value >= 500000:
             system_pc = pc
         elif value < 500000:
             user_pc = pc
+
+    if global_default_count > 1:
+        return CheckResult(
+            ok=False,
+            error="集群中只能有一个 PriorityClass 设置 globalDefault: true",
+            hints=["只保留一个 globalDefault: true 的 PriorityClass"],
+        )
 
     if system_pc is None:
         return CheckResult(
@@ -859,6 +884,13 @@ def _check_165_multi_priority_workload(user_yaml: str) -> CheckResult:
             ok=False,
             error="PriorityClass 缺少 value",
             hints=["添加 value: 1000000"],
+        )
+
+    if isinstance(value, bool) or not isinstance(value, int):
+        return CheckResult(
+            ok=False,
+            error=f"value 必须是整数，实际为 {type(value).__name__}",
+            hints=["value 是整数类型，不需要引号"],
         )
 
     # 检查 Pod

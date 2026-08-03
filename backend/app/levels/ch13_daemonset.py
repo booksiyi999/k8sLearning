@@ -89,7 +89,7 @@ metadata:
     # 验证为每个 Node 创建了 Pod
     ds_pods = [pn for pn, p in state.pods.items()
                if isinstance(p.get("metadata", {}).get("labels", {}), dict)
-               and p["metadata"]["labels"].get("daemonset") == ds_name]
+               and p.get("metadata", {}).get("labels", {}).get("daemonset") == ds_name]
     if len(ds_pods) < 3:
         return CheckResult(
             ok=False,
@@ -331,7 +331,7 @@ metadata:
     # 验证只在 SSD 节点上创建了 Pod
     ds_pods = [pn for pn, p in state.pods.items()
                if isinstance(p.get("metadata", {}).get("labels", {}), dict)
-               and p["metadata"]["labels"].get("daemonset") == ds_name]
+               and p.get("metadata", {}).get("labels", {}).get("daemonset") == ds_name]
     if len(ds_pods) != 1:
         return CheckResult(
             ok=False,
@@ -1093,6 +1093,13 @@ metadata:
             hints=["使用 fluent/fluent-bit 镜像 📦"],
         )
 
+    if not isinstance(image, str):
+        return CheckResult(
+            ok=False,
+            error="image 必须是字符串",
+            hints=["使用 fluent/fluent-bit 镜像 📦"],
+        )
+
     image_lower = image.lower()
     if "fluent" not in image_lower:
         return CheckResult(
@@ -1132,7 +1139,7 @@ metadata:
     # 验证为每个节点创建了 Pod
     ds_pods = [pn for pn, p in state.pods.items()
                if isinstance(p.get("metadata", {}).get("labels", {}), dict)
-               and p["metadata"]["labels"].get("daemonset") == ds_name]
+               and p.get("metadata", {}).get("labels", {}).get("daemonset") == ds_name]
     if len(ds_pods) < 3:
         return CheckResult(
             ok=False,

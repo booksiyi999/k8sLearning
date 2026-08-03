@@ -41,6 +41,12 @@ def _check_151_create_pdb(user_yaml: str) -> CheckResult:
         )
 
     min_available = spec.get("minAvailable")
+    if isinstance(min_available, bool) or not isinstance(min_available, int):
+        return CheckResult(
+            ok=False,
+            error=f"spec.minAvailable 应为整数，实际为 {type(min_available).__name__}: {min_available}",
+            hints=["设置 spec.minAvailable: 2（整数）"],
+        )
     if min_available != 2:
         return CheckResult(
             ok=False,
@@ -219,7 +225,15 @@ def _check_152_min_available_percent(user_yaml: str) -> CheckResult:
 
     min_available = spec.get("minAvailable")
     # 百分比形式是字符串（如 "50%"），整数形式是 int
-    if isinstance(min_available, str) and "%" in min_available:
+    import re
+    if isinstance(min_available, str) and re.match(r'^\d+%$', min_available):
+        pct_num = int(min_available.rstrip('%'))
+        if pct_num < 0 or pct_num > 100:
+            return CheckResult(
+                ok=False,
+                error=f"minAvailable 百分比应在 0-100 范围内，实际为 {min_available}",
+                hints=["使用 0%-100% 范围内的百分比"],
+            )
         return CheckResult(
             ok=True, state=state,
             hints=["百分比形式的 minAvailable 会根据实际 Pod 数量动态计算 📊"],
@@ -385,6 +399,12 @@ def _check_153_max_unavailable(user_yaml: str) -> CheckResult:
         )
 
     max_unavail = spec.get("maxUnavailable")
+    if isinstance(max_unavail, bool) or not isinstance(max_unavail, int):
+        return CheckResult(
+            ok=False,
+            error=f"spec.maxUnavailable 应为整数，实际为 {type(max_unavail).__name__}: {max_unavail}",
+            hints=["设置 spec.maxUnavailable: 1（整数）"],
+        )
     if max_unavail != 1:
         return CheckResult(
             ok=False,
@@ -575,6 +595,12 @@ def _check_154_protection_scenario(user_yaml: str) -> CheckResult:
         )
 
     max_unavail = spec.get("maxUnavailable")
+    if isinstance(max_unavail, bool) or not isinstance(max_unavail, int):
+        return CheckResult(
+            ok=False,
+            error=f"spec.maxUnavailable 应为整数，实际为 {type(max_unavail).__name__}: {max_unavail}",
+            hints=["设置 spec.maxUnavailable: 1（整数）"],
+        )
     if max_unavail != 1:
         return CheckResult(
             ok=False,
@@ -805,6 +831,12 @@ def _check_155_production_protection(user_yaml: str) -> CheckResult:
         )
 
     min_avail = pdb_spec.get("minAvailable")
+    if isinstance(min_avail, bool) or not isinstance(min_avail, int):
+        return CheckResult(
+            ok=False,
+            error=f"PDB minAvailable 应为整数，实际为 {type(min_avail).__name__}: {min_avail}",
+            hints=["设置 spec.minAvailable: 2（整数）"],
+        )
     if min_avail != 2:
         return CheckResult(
             ok=False,
@@ -812,9 +844,15 @@ def _check_155_production_protection(user_yaml: str) -> CheckResult:
             hints=["设置 spec.minAvailable: 2"],
         )
 
-    # 验证 PDB selector 与 Deployment label 匹配
+    # 验证 PDB selector 存在且非空，matchLabels 至少有一个 key
     selector = pdb_spec.get("selector", {})
     match_labels = selector.get("matchLabels", {}) if isinstance(selector, dict) else {}
+    if not isinstance(match_labels, dict) or not match_labels:
+        return CheckResult(
+            ok=False,
+            error="PDB 缺少有效的 selector.matchLabels（至少需要一个标签）",
+            hints=["添加 selector.matchLabels 至少一个键值对"],
+        )
     dep_labels = dep_spec.get("template", {}).get("metadata", {}).get("labels", {})
     if isinstance(match_labels, dict) and isinstance(dep_labels, dict):
         app_label = match_labels.get("app")

@@ -340,10 +340,11 @@ def _check_172_create_cr(user_yaml: str) -> CheckResult:
 
     # 检查 apiVersion
     api_version = cr.get("apiVersion", "")
-    if "blog.example.com" not in api_version:
+    parts = api_version.split("/")
+    if len(parts) != 2 or parts[0] != "blog.example.com":
         return CheckResult(
             ok=False,
-            error=f"apiVersion 应包含 'blog.example.com'，实际为 '{api_version}'",
+            error=f"apiVersion 应为 'blog.example.com/v1'，实际为 '{api_version}'",
             hints=["apiVersion 格式: <group>/<version>，如 blog.example.com/v1"],
         )
 
@@ -885,7 +886,9 @@ def _check_174_operator_pattern(user_yaml: str) -> CheckResult:
         for e in env:
             if isinstance(e, dict):
                 name = e.get("name", "")
-                if "WATCH" in name.upper() or "NAMESPACE" in name.upper() or "CRD" in name.upper():
+                if not isinstance(name, str):
+                    continue
+                if name == "WATCH_NAMESPACE":
                     has_watch_env = True
                     break
 
@@ -1136,6 +1139,35 @@ def _check_175_deploy_operator(user_yaml: str) -> CheckResult:
             ok=False,
             error=f"Deployment 引用的 ServiceAccount '{sa_name}' 不存在",
             hints=["确保 ServiceAccount 名称与 Deployment 中引用的一致"],
+        )
+
+    # 检查 Deployment 容器有 WATCH_NAMESPACE 环境变量
+    containers_175 = dep_spec.get("containers", [])
+    has_watch_env_175 = False
+    if isinstance(containers_175, list):
+        for c_175 in containers_175:
+            if isinstance(c_175, dict):
+                env_175 = c_175.get("env", [])
+                if isinstance(env_175, list):
+                    for e_175 in env_175:
+                        if isinstance(e_175, dict):
+                            name_175 = e_175.get("name", "")
+                            if not isinstance(name_175, str):
+                                continue
+                            if name_175 == "WATCH_NAMESPACE":
+                                has_watch_env_175 = True
+                                break
+            if has_watch_env_175:
+                break
+
+    if not has_watch_env_175:
+        return CheckResult(
+            ok=False,
+            error="Operator 容器缺少 WATCH_NAMESPACE 环境变量",
+            hints=[
+                "Operator 控制器通常通过环境变量配置监听范围 💡",
+                "添加 env: [{name: WATCH_NAMESPACE, value: \"\"}]",
+            ],
         )
 
     # 检查 CRD 有 versions
