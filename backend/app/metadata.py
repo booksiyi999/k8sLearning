@@ -132,6 +132,48 @@ CHAPTERS_META = {
         "description": "ServiceAccount 身份与 Pod 安全标准",
         "difficulty": 4,
     },
+    "ch19": {
+        "title": "Helm 包管理",
+        "icon": "📦",
+        "color": "#0d47a1",
+        "description": "Helm Chart 打包、模板渲染与依赖管理",
+        "difficulty": 4,
+    },
+    "ch20": {
+        "title": "存储进阶",
+        "icon": "💽",
+        "color": "#00695c",
+        "description": "StorageClass、CSI 驱动与 VolumeSnapshot",
+        "difficulty": 5,
+    },
+    "ch21": {
+        "title": "集群维护",
+        "icon": "🔧",
+        "color": "#455a64",
+        "description": "etcd 备份恢复、集群升级与节点维护",
+        "difficulty": 4,
+    },
+    "ch22": {
+        "title": "故障排查",
+        "icon": "🔍",
+        "color": "#bf360c",
+        "description": "Pod/Service/Node/控制平面故障诊断与修复",
+        "difficulty": 5,
+    },
+    "ch23": {
+        "title": "监控与日志",
+        "icon": "📊",
+        "color": "#e91e63",
+        "description": "Prometheus、Grafana、Fluent Bit，构建可观测性体系",
+        "difficulty": 4,
+    },
+    "ch24": {
+        "title": "安全策略进阶",
+        "icon": "🔒",
+        "color": "#b71c1c",
+        "description": "Admission Webhook、OPA Gatekeeper、审计日志",
+        "difficulty": 5,
+    },
 }
 
 # ==================== 知识点映射 ====================
@@ -241,14 +283,50 @@ KNOWLEDGE_POINTS = {
     "Q18.3": ["SecurityContext", "runAsNonRoot", "readOnlyRootFilesystem"],
     "Q18.4": ["Pod Security Standards", "restricted", "baseline", "privileged"],
     "Q18.5": ["最小权限实战", "SA + 安全 Pod", "多文档 YAML"],
+    # Ch19: Helm 包管理
+    "Q19.1": ["Helm Chart 概念", "Chart.yaml 结构", "apiVersion/name/version"],
+    "Q19.2": ["values.yaml", "配置参数化", ".Values 引用"],
+    "Q19.3": ["Helm 模板", "Go template", ".Release/.Values/.Chart"],
+    "Q19.4": ["Helm 依赖", "dependencies", "子 chart 管理"],
+    "Q19.5": ["Helm 实战", "helm install/upgrade", "Release 管理"],
+    # Ch20: 存储进阶
+    "Q20.1": ["StorageClass", "动态 Provisioning", "provisioner"],
+    "Q20.2": ["CSI 驱动", "volumeBindingMode", "WaitForFirstConsumer"],
+    "Q20.3": ["VolumeSnapshot", "卷快照", "PVC 快照"],
+    "Q20.4": ["VolumeSnapshotContent", "快照内容管理", "snapshotHandle"],
+    "Q20.5": ["动态存储全流程", "SC+PVC+Pod+Snapshot", "多文档 YAML"],
+    # Ch21: 集群维护
+    "Q21.1": ["etcd 备份", "etcdctl snapshot save", "TLS 证书"],
+    "Q21.2": ["etcd 恢复", "etcdctl snapshot restore", "--data-dir"],
+    "Q21.3": ["集群升级", "kubeadm upgrade plan/apply", "版本兼容性"],
+    "Q21.4": ["节点维护", "kubectl drain/uncordon", "--ignore-daemonsets"],
+    "Q21.5": ["完整节点维护", "drain+维护+uncordon", "生产环境流程"],
+    # Ch22: 故障排查
+    "Q22.1": ["CrashLoopBackOff", "kubectl logs --previous", "容器命令修复"],
+    "Q22.2": ["Service 连通性", "selector/labels 匹配", "Endpoints 排查"],
+    "Q22.3": ["Node NotReady", "kubectl describe node", "Conditions/Events"],
+    "Q22.4": ["控制平面故障", "kube-system Pod", "componentstatuses"],
+    "Q22.5": ["完整故障排查", "多问题修复", "系统性排查"],
+    # Ch23: 监控与日志
+    "Q23.1": ["ServiceMonitor", "Prometheus Operator", "selector/matchLabels", "endpoints"],
+    "Q23.2": ["Grafana Dashboard", "ConfigMap", "grafana_dashboard 标签", "Sidecar 自动发现"],
+    "Q23.3": ["Fluent Bit", "DaemonSet", "hostPath 挂载", "日志采集"],
+    "Q23.4": ["PrometheusRule", "告警规则", "PromQL", "groups/rules"],
+    "Q23.5": ["可观测性栈", "ServiceMonitor+ConfigMap+DaemonSet", "多文档 YAML"],
+    # Ch24: 安全策略进阶
+    "Q24.1": ["ValidatingAdmissionWebhook", "准入控制", "clientConfig", "rules"],
+    "Q24.2": ["MutatingAdmissionWebhook", "变更准入", "JSON Patch", "reinvocationPolicy"],
+    "Q24.3": ["OPA Gatekeeper", "Constraint", "策略即代码", "Rego"],
+    "Q24.4": ["Audit Policy", "审计日志", "level", "rules"],
+    "Q24.5": ["多层安全防护", "Webhook+OPA+NetworkPolicy", "纵深防御", "多文档 YAML"],
 }
 
 # ==================== XP 配置 ====================
 
-LEVEL_XP = {f"Q{i}.{j}": 10 for i in range(1, 19) for j in range(1, 6)}
+LEVEL_XP = {f"Q{i}.{j}": 10 for i in range(1, 25) for j in range(1, 6)}
 
 # 章节通关奖励
-CHAPTER_BONUS_XP = {f"ch{i:02d}": 50 for i in range(1, 19)}
+CHAPTER_BONUS_XP = {f"ch{i:02d}": 50 for i in range(1, 25)}
 
 # 等级称号 (总XP -> 称号)
 RANKS = [
@@ -300,6 +378,12 @@ KNOWLEDGE_DOMAINS = {
     "优先级调度": ["Q16.1", "Q16.2", "Q16.3", "Q16.4", "Q16.5"],
     "自定义资源": ["Q17.1", "Q17.2", "Q17.3", "Q17.4", "Q17.5"],
     "安全与身份": ["Q18.1", "Q18.2", "Q18.3", "Q18.4", "Q18.5"],
+    "包管理": ["Q19.1", "Q19.2", "Q19.3", "Q19.4", "Q19.5"],
+    "存储进阶": ["Q20.1", "Q20.2", "Q20.3", "Q20.4", "Q20.5"],
+    "集群维护": ["Q21.1", "Q21.2", "Q21.3", "Q21.4", "Q21.5"],
+    "故障排查": ["Q22.1", "Q22.2", "Q22.3", "Q22.4", "Q22.5"],
+    "监控与日志": ["Q23.1", "Q23.2", "Q23.3", "Q23.4", "Q23.5"],
+    "安全策略进阶": ["Q24.1", "Q24.2", "Q24.3", "Q24.4", "Q24.5"],
 }
 
 

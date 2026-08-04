@@ -53,6 +53,12 @@ def get_level(level_id: str) -> Level | None:
     from app.levels.ch16_priority import CHAPTER_16_LEVELS
     from app.levels.ch17_crd_operator import CHAPTER_17_LEVELS
     from app.levels.ch18_sa_security import CHAPTER_18_LEVELS
+    from app.levels.ch19_helm import CHAPTER_19_LEVELS
+    from app.levels.ch20_storage_advanced import CHAPTER_20_LEVELS
+    from app.levels.ch21_cluster_maintenance import CHAPTER_21_LEVELS
+    from app.levels.ch22_troubleshooting import CHAPTER_22_LEVELS
+    from app.levels.ch23_monitoring import CHAPTER_23_LEVELS
+    from app.levels.ch24_security_advanced import CHAPTER_24_LEVELS
     from app.levels.cluster_practice import CLUSTER_PRACTICE_LEVELS
     all_levels = (
         CHAPTER_1_LEVELS + CHAPTER_2_LEVELS + CHAPTER_3_LEVELS
@@ -61,7 +67,9 @@ def get_level(level_id: str) -> Level | None:
         + CHAPTER_9_LEVELS + CHAPTER_10_LEVELS + CHAPTER_11_LEVELS
         + CHAPTER_12_LEVELS + CHAPTER_13_LEVELS + CHAPTER_14_LEVELS
         + CHAPTER_15_LEVELS + CHAPTER_16_LEVELS + CHAPTER_17_LEVELS
-        + CHAPTER_18_LEVELS
+        + CHAPTER_18_LEVELS + CHAPTER_19_LEVELS + CHAPTER_20_LEVELS
+        + CHAPTER_21_LEVELS + CHAPTER_22_LEVELS
+        + CHAPTER_23_LEVELS + CHAPTER_24_LEVELS
         + CLUSTER_PRACTICE_LEVELS
     )
     for lv in all_levels:
@@ -90,6 +98,12 @@ def list_levels(chapter: str | None = None) -> list[dict]:
     from app.levels.ch16_priority import CHAPTER_16_LEVELS
     from app.levels.ch17_crd_operator import CHAPTER_17_LEVELS
     from app.levels.ch18_sa_security import CHAPTER_18_LEVELS
+    from app.levels.ch19_helm import CHAPTER_19_LEVELS
+    from app.levels.ch20_storage_advanced import CHAPTER_20_LEVELS
+    from app.levels.ch21_cluster_maintenance import CHAPTER_21_LEVELS
+    from app.levels.ch22_troubleshooting import CHAPTER_22_LEVELS
+    from app.levels.ch23_monitoring import CHAPTER_23_LEVELS
+    from app.levels.ch24_security_advanced import CHAPTER_24_LEVELS
     from app.levels.cluster_practice import CLUSTER_PRACTICE_LEVELS
     all_levels = (
         CHAPTER_1_LEVELS + CHAPTER_2_LEVELS + CHAPTER_3_LEVELS
@@ -98,7 +112,9 @@ def list_levels(chapter: str | None = None) -> list[dict]:
         + CHAPTER_9_LEVELS + CHAPTER_10_LEVELS + CHAPTER_11_LEVELS
         + CHAPTER_12_LEVELS + CHAPTER_13_LEVELS + CHAPTER_14_LEVELS
         + CHAPTER_15_LEVELS + CHAPTER_16_LEVELS + CHAPTER_17_LEVELS
-        + CHAPTER_18_LEVELS
+        + CHAPTER_18_LEVELS + CHAPTER_19_LEVELS + CHAPTER_20_LEVELS
+        + CHAPTER_21_LEVELS + CHAPTER_22_LEVELS
+        + CHAPTER_23_LEVELS + CHAPTER_24_LEVELS
         + CLUSTER_PRACTICE_LEVELS
     )
     if chapter is not None:

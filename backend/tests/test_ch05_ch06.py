@@ -375,7 +375,7 @@ spec:
 
 class TestCh56Registration:
     def test_total_levels(self):
-        assert len(list_levels()) == 90
+        assert len(list_levels()) == 120
 
     def test_ch05_exists(self):
         ch05 = [l for l in list_levels() if l["chapter"] == "ch05"]

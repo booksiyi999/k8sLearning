@@ -47,6 +47,10 @@ class ClusterState:
     serviceaccounts: dict[str, dict] = field(default_factory=dict)
     # v0.7: Ch17-Ch18 自定义资源实例
     customresources: dict[str, dict] = field(default_factory=dict)
+    # v0.8: Ch19-Ch20 新增资源类型
+    storageclasses: dict[str, dict] = field(default_factory=dict)
+    volumesnapshots: dict[str, dict] = field(default_factory=dict)
+    volumesnapshotcontents: dict[str, dict] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -255,6 +259,12 @@ def apply_manifest(state: ClusterState, yaml_text: str) -> ClusterState:
             _apply_crd(state, doc)
         elif kind == "ServiceAccount":
             _apply_serviceaccount(state, doc)
+        elif kind == "StorageClass":
+            _apply_storageclass(state, doc)
+        elif kind == "VolumeSnapshot":
+            _apply_volumesnapshot(state, doc)
+        elif kind == "VolumeSnapshotContent":
+            _apply_volumesnapshotcontent(state, doc)
         else:
             # 尝试作为自定义资源（CRD 实例）处理
             _apply_customresource(state, doc)
@@ -991,3 +1001,64 @@ def _apply_customresource(state: ClusterState, doc: dict) -> None:
         f"不支持的资源类型：{kind}（apiVersion: {api_version}）。"
         f"如需创建自定义资源，请先注册对应的 CRD。"
     )
+
+
+# ---------------------------------------------------------------------------
+# v0.8: Ch19-Ch20 新增资源类型
+# ---------------------------------------------------------------------------
+
+def _apply_storageclass(state: ClusterState, doc: dict) -> None:
+    """StorageClass: 验证并存储。
+
+    注意: StorageClass 的 provisioner / reclaimPolicy / volumeBindingMode /
+    parameters / allowVolumeExpansion 都是顶层字段，不在 spec 下。
+    模拟器统一将其归入 spec dict 以方便 check_fn 访问。
+    """
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict) or "name" not in metadata:
+        raise K8sError("StorageClass 缺少 metadata.name")
+    provisioner = doc.get("provisioner")
+    if not isinstance(provisioner, str) or not provisioner:
+        raise K8sError("StorageClass 缺少 provisioner")
+    # 归一化：将顶层字段放入 spec，方便 check_fn 统一访问
+    spec = {
+        "provisioner": provisioner,
+        "reclaimPolicy": doc.get("reclaimPolicy", "Delete"),
+        "volumeBindingMode": doc.get("volumeBindingMode", "Immediate"),
+        "parameters": doc.get("parameters", {}),
+        "allowVolumeExpansion": doc.get("allowVolumeExpansion"),
+    }
+    doc_norm = dict(doc)
+    doc_norm["spec"] = spec
+    state.storageclasses[metadata["name"]] = doc_norm
+
+
+def _apply_volumesnapshot(state: ClusterState, doc: dict) -> None:
+    """VolumeSnapshot: 验证并存储。
+
+    校验 metadata.name / spec.source（引用 PVC 或 VolumeSnapshotContent）。
+    """
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict) or "name" not in metadata:
+        raise K8sError("VolumeSnapshot 缺少 metadata.name")
+    spec = doc.get("spec", {})
+    if not isinstance(spec, dict):
+        raise K8sError("VolumeSnapshot 缺少 spec")
+    source = spec.get("source")
+    if not isinstance(source, dict) or not source:
+        raise K8sError("VolumeSnapshot 缺少 spec.source")
+    state.volumesnapshots[metadata["name"]] = doc
+
+
+def _apply_volumesnapshotcontent(state: ClusterState, doc: dict) -> None:
+    """VolumeSnapshotContent: 验证并存储。
+
+    校验 metadata.name / spec.volumeSnapshotRef / spec.source。
+    """
+    metadata = doc.get("metadata")
+    if not isinstance(metadata, dict) or "name" not in metadata:
+        raise K8sError("VolumeSnapshotContent 缺少 metadata.name")
+    spec = doc.get("spec", {})
+    if not isinstance(spec, dict):
+        raise K8sError("VolumeSnapshotContent 缺少 spec")
+    state.volumesnapshotcontents[metadata["name"]] = doc
