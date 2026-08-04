@@ -47,6 +47,48 @@ class CheckResponse(BaseModel):
 async def api_list_levels():
     return {"levels": list_levels()}
 
+@app.get("/api/admin/all-levels")
+async def api_admin_all_levels():
+    """后门模式：返回所有关卡完整信息（题目/模板/教学内容）。"""
+    all_data = []
+    for ch_id in sorted(CHAPTERS_META.keys()):
+        ch_meta = CHAPTERS_META[ch_id]
+        ch_levels = list_levels(ch_id)
+        chapter_data = {
+            "chapter": ch_id,
+            "title": ch_meta["title"],
+            "icon": ch_meta["icon"],
+            "color": ch_meta["color"],
+            "description": ch_meta["description"],
+            "difficulty": ch_meta["difficulty"],
+            "levels": []
+        }
+        for lv_info in ch_levels:
+            lv = get_level(lv_info["id"])
+            if not lv:
+                continue
+            level_data = {
+                "id": lv.id,
+                "title": lv.title,
+                "description": lv.description,
+                "starter_yaml": lv.starter_yaml,
+                "knowledge_points": KNOWLEDGE_POINTS.get(lv.id, []),
+                "xp": LEVEL_XP.get(lv.id, 10),
+                "lesson": None,
+            }
+            if lv.lesson:
+                level_data["lesson"] = {
+                    "concept": lv.lesson.concept,
+                    "key_fields": lv.lesson.key_fields,
+                    "diagram": lv.lesson.diagram,
+                    "example_yaml": lv.lesson.example_yaml,
+                    "common_errors": lv.lesson.common_errors,
+                    "tips": lv.lesson.tips,
+                }
+            chapter_data["levels"].append(level_data)
+        all_data.append(chapter_data)
+    return {"chapters": all_data, "total_levels": sum(len(ch["levels"]) for ch in all_data)}
+
 @app.post("/api/check", response_model=CheckResponse)
 async def api_check(req: CheckRequest):
     # 顶层 try/except 兜底: 任何未捕获异常都转为 200 ok=False, 绝不泄漏成 HTTP 500。

@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🔧 K8s Quest 后门模式</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0f1117; color: #e0e0e0; line-height: 1.6;
+    }
+    .header {
+      background: linear-gradient(135deg, #1a1f2e 0%, #2a3142 100%);
+      padding: 16px 24px; border-bottom: 2px solid #ff6b9d;
+      display: flex; align-items: center; justify-content: space-between;
+      position: sticky; top: 0; z-index: 100;
+    }
+    .header h1 { font-size: 18px; color: #ff6b9d; }
+    .header .stats { font-size: 13px; color: #888; }
+    .header a { color: #6bb6ff; text-decoration: none; font-size: 13px; }
+    .controls { padding: 12px 24px; background: #1a1f2e; border-bottom: 1px solid #2a3142; }
+    .controls input, .controls select {
+      background: #2a3142; border: 1px solid #3a4152; color: #e0e0e0;
+      padding: 6px 12px; border-radius: 4px; font-size: 13px; margin-right: 8px;
+    }
+    .controls input { width: 300px; }
+    .controls label { font-size: 13px; color: #888; margin-right: 4px; }
+    .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+
+    .chapter-block {
+      margin-bottom: 24px; border: 1px solid #2a3142; border-radius: 8px; overflow: hidden;
+    }
+    .chapter-header {
+      padding: 12px 16px; cursor: pointer; display: flex; align-items: center; gap: 8px;
+      font-size: 15px; font-weight: 600;
+    }
+    .chapter-header:hover { filter: brightness(1.2); }
+    .chapter-levels { display: none; }
+    .chapter-block.open .chapter-levels { display: block; }
+
+    .level-card {
+      background: #1a1f2e; border-top: 1px solid #2a3142; padding: 16px;
+    }
+    .level-title {
+      font-size: 14px; font-weight: 600; color: #6bb6ff; margin-bottom: 8px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .level-badge {
+      font-size: 11px; padding: 2px 8px; border-radius: 10px;
+      background: #2a3142; color: #888;
+    }
+    .level-desc {
+      font-size: 13px; color: #aaa; margin-bottom: 12px;
+      white-space: pre-wrap;
+    }
+    .level-section { margin-bottom: 12px; }
+    .level-section-title {
+      font-size: 12px; color: #ff6b9d; margin-bottom: 4px; font-weight: 600;
+    }
+    .level-yaml {
+      background: #0d1117; border: 1px solid #2a3142; border-radius: 4px;
+      padding: 10px; font-family: 'JetBrains Mono', monospace; font-size: 12px;
+      color: #98c379; white-space: pre-wrap; overflow-x: auto; max-height: 300px;
+    }
+    .lesson-content {
+      background: #0d1117; border: 1px solid #2a3142; border-radius: 4px;
+      padding: 10px; font-size: 13px; color: #ccc; white-space: pre-wrap;
+      max-height: 400px; overflow-y: auto;
+    }
+    .key-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .key-field {
+      background: #0d1117; border: 1px solid #2a3142; border-radius: 4px; padding: 8px; font-size: 12px;
+    }
+    .key-field .kf-name { color: #6bb6ff; font-weight: 600; }
+    .key-field .kf-desc { color: #888; margin-top: 2px; }
+    .key-field .kf-example { color: #98c379; margin-top: 2px; font-family: monospace; }
+    .kp-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+    .kp-tag {
+      font-size: 11px; padding: 2px 8px; border-radius: 10px;
+      background: #2a3142; color: #aaa;
+    }
+    .toggle-btn { font-size: 12px; color: #6bb6ff; cursor: pointer; margin-left: 8px; }
+    .toggle-btn:hover { text-decoration: underline; }
+    .hidden { display: none; }
+    .loading { text-align: center; padding: 60px; color: #888; }
+  </style>
+</head>
+<body>
+<div class="header">
+  <h1>🔧 K8s Quest 后门模式 — 全关卡浏览</h1>
+  <div class="stats" id="stats">加载中...</div>
+  <a href="/">← 返回正常模式</a>
+</div>
+
+<div class="controls">
+  <label>🔍 搜索:</label>
+  <input type="text" id="search" placeholder="搜索关卡标题/描述/知识点..." oninput="filterLevels()">
+  <label>📋 筛选:</label>
+  <select id="filter-chapter" onchange="filterLevels()">
+    <option value="">全部章节</option>
+  </select>
+  <label>
+    <input type="checkbox" id="show-lesson" checked onchange="toggleLessons()"> 显示教学内容
+  </label>
+  <label>
+    <input type="checkbox" id="show-yaml" checked onchange="toggleYaml()"> 显示起始模板
+  </label>
+  <span class="toggle-btn" onclick="toggleAll()">全部展开/折叠</span>
+</div>
+
+<div class="container" id="container">
+  <div class="loading">🍒 加载中...</div>
+</div>
+
+<script>
+let allData = null;
+
+async function load() {
+  const resp = await fetch('/api/admin/all-levels');
+  allData = await resp.json();
+  document.getElementById('stats').textContent = `${allData.chapters.length} 章 · ${allData.total_levels} 关`;
+
+  // Populate chapter filter
+  const sel = document.getElementById('filter-chapter');
+  allData.chapters.forEach(ch => {
+    const opt = document.createElement('option');
+    opt.value = ch.chapter;
+    opt.textContent = `${ch.icon} ${ch.title}`;
+    sel.appendChild(opt);
+  });
+
+  render(allData.chapters);
+}
+
+function render(chapters) {
+  const container = document.getElementById('container');
+  container.innerHTML = '';
+
+  chapters.forEach(ch => {
+    const block = document.createElement('div');
+    block.className = 'chapter-block';
+    block.dataset.chapter = ch.chapter;
+
+    const header = document.createElement('div');
+    header.className = 'chapter-header';
+    header.style.background = `linear-gradient(90deg, ${ch.color}22, transparent)`;
+    header.style.borderLeft = `4px solid ${ch.color}`;
+    header.innerHTML = `
+      <span style="font-size:20px">${ch.icon}</span>
+      <span>${ch.chapter.replace('ch','Ch')} · ${ch.title}</span>
+      <span style="font-size:12px;color:#888;margin-left:auto">${ch.levels.length} 关 · 难度${'⭐'.repeat(ch.difficulty)}</span>
+      <span style="font-size:14px;color:#888">▼</span>
+    `;
+    header.onclick = () => block.classList.toggle('open');
+
+    const levelsDiv = document.createElement('div');
+    levelsDiv.className = 'chapter-levels';
+
+    ch.levels.forEach(lv => {
+      const card = document.createElement('div');
+      card.className = 'level-card';
+      card.dataset.search = (
+        lv.id + ' ' + lv.title + ' ' + lv.description + ' ' +
+        (lv.knowledge_points || []).join(' ') + ' ' +
+        (lv.lesson ? lv.lesson.concept : '')
+      ).toLowerCase();
+
+      let html = `<div class="level-title">
+        <span>${lv.id}</span>
+        <span>${lv.title}</span>
+        <span class="level-badge">+${lv.xp} XP</span>
+      </div>`;
+
+      // Knowledge points
+      if (lv.knowledge_points && lv.knowledge_points.length) {
+        html += `<div class="kp-tags">`;
+        lv.knowledge_points.forEach(kp => html += `<span class="kp-tag">${kp}</span>`);
+        html += `</div>`;
+      }
+
+      // Description (prompt)
+      html += `<div class="level-desc">${lv.description || '(无描述)'}</div>`;
+
+      // Starter YAML
+      if (lv.starter_yaml) {
+        html += `<div class="level-section yaml-section">
+          <div class="level-section-title">📝 起始模板 <span class="toggle-btn" onclick="this.closest('.level-card').querySelector('.level-yaml').classList.toggle('hidden')">收起/展开</span></div>
+          <div class="level-yaml">${escapeHtml(lv.starter_yaml)}</div>
+        </div>`;
+      }
+
+      // Lesson
+      if (lv.lesson) {
+        const ls = lv.lesson;
+        html += `<div class="level-section lesson-section">
+          <div class="level-section-title">📖 知识讲解 <span class="toggle-btn" onclick="this.closest('.level-card').querySelector('.lesson-content').classList.toggle('hidden')">收起/展开</span></div>
+          <div class="lesson-content">${escapeHtml(ls.concept)}</div>
+        </div>`;
+
+        // Diagram
+        if (ls.diagram) {
+          html += `<div class="level-section lesson-section">
+            <div class="level-section-title">🔀 图解</div>
+            <div class="lesson-content" style="font-family:monospace;font-size:11px">${escapeHtml(ls.diagram)}</div>
+          </div>`;
+        }
+
+        // Key fields
+        if (ls.key_fields && ls.key_fields.length) {
+          html += `<div class="level-section lesson-section">
+            <div class="level-section-title">🔑 关键字段</div>
+            <div class="key-fields">`;
+          ls.key_fields.forEach(kf => {
+            html += `<div class="key-field">
+              <div class="kf-name">${kf.name || ''} ${kf.required ? '<span style="color:#ff6b9d">*</span>' : ''}</div>
+              <div class="kf-desc">${kf.description || ''}</div>
+              ${kf.example ? `<div class="kf-example">${escapeHtml(kf.example)}</div>` : ''}
+            </div>`;
+          });
+          html += `</div></div>`;
+        }
+
+        // Example YAML
+        if (ls.example_yaml) {
+          html += `<div class="level-section lesson-section">
+            <div class="level-section-title">✅ 示例 YAML <span class="toggle-btn" onclick="this.closest('.level-card').querySelectorAll('.level-yaml')[1].classList.toggle('hidden')">收起/展开</span></div>
+            <div class="level-yaml">${escapeHtml(ls.example_yaml)}</div>
+          </div>`;
+        }
+
+        // Common errors
+        if (ls.common_errors && ls.common_errors.length) {
+          html += `<div class="level-section lesson-section">
+            <div class="level-section-title">⚠️ 常见错误</div>
+            <ul style="font-size:12px;color:#aaa;padding-left:20px">`;
+          ls.common_errors.forEach(e => html += `<li>${escapeHtml(e)}</li>`);
+          html += `</ul></div>`;
+        }
+
+        // Tips
+        if (ls.tips && ls.tips.length) {
+          html += `<div class="level-section lesson-section">
+            <div class="level-section-title">💡 学习建议</div>
+            <ul style="font-size:12px;color:#aaa;padding-left:20px">`;
+          ls.tips.forEach(t => html += `<li>${escapeHtml(t)}</li>`);
+          html += `</ul></div>`;
+        }
+      }
+
+      card.innerHTML = html;
+      levelsDiv.appendChild(card);
+    });
+
+    block.appendChild(header);
+    block.appendChild(levelsDiv);
+    container.appendChild(block);
+  });
+}
+
+function escapeHtml(s) {
+  if (!s) return '';
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function filterLevels() {
+  const q = document.getElementById('search').value.toLowerCase();
+  const chFilter = document.getElementById('filter-chapter').value;
+
+  if (q) {
+    // Search mode: flatten and show matching levels
+    const container = document.getElementById('container');
+    container.innerHTML = '';
+    let matchCount = 0;
+    allData.chapters.forEach(ch => {
+      if (chFilter && ch.chapter !== chFilter) return;
+      const matches = ch.levels.filter(lv => {
+        const text = (
+          lv.id + ' ' + lv.title + ' ' + lv.description + ' ' +
+          (lv.knowledge_points || []).join(' ') + ' ' +
+          (lv.lesson ? lv.lesson.concept : '')
+        ).toLowerCase();
+        return text.includes(q);
+      });
+      if (matches.length === 0) return;
+      matchCount += matches.length;
+
+      const block = document.createElement('div');
+      block.className = 'chapter-block open';
+      const header = document.createElement('div');
+      header.className = 'chapter-header';
+      header.style.background = `linear-gradient(90deg, ${ch.color}22, transparent)`;
+      header.style.borderLeft = `4px solid ${ch.color}`;
+      header.innerHTML = `<span style="font-size:20px">${ch.icon}</span><span>${ch.chapter.replace('ch','Ch')} · ${ch.title}</span><span style="font-size:12px;color:#888;margin-left:auto">${matches.length} 关匹配</span>`;
+      block.appendChild(header);
+
+      const levelsDiv = document.createElement('div');
+      levelsDiv.className = 'chapter-levels';
+      // Reuse rendering for matched levels
+      const tempCh = {...ch, levels: matches};
+      // We need to call render for individual cards - let's just rebuild
+      matches.forEach(lv => {
+        // Same card rendering as above - simplified
+        const card = document.createElement('div');
+        card.className = 'level-card';
+        let html = `<div class="level-title"><span>${lv.id}</span><span>${lv.title}</span><span class="level-badge">+${lv.xp} XP</span></div>`;
+        if (lv.knowledge_points && lv.knowledge_points.length) {
+          html += `<div class="kp-tags">`;
+          lv.knowledge_points.forEach(kp => html += `<span class="kp-tag">${kp}</span>`);
+          html += `</div>`;
+        }
+        html += `<div class="level-desc">${lv.description || '(无描述)'}</div>`;
+        if (lv.starter_yaml) {
+          html += `<div class="level-section"><div class="level-section-title">📝 起始模板</div><div class="level-yaml">${escapeHtml(lv.starter_yaml)}</div></div>`;
+        }
+        if (lv.lesson) {
+          html += `<div class="level-section"><div class="level-section-title">📖 知识讲解</div><div class="lesson-content">${escapeHtml(lv.lesson.concept)}</div></div>`;
+          if (lv.lesson.example_yaml) {
+            html += `<div class="level-section"><div class="level-section-title">✅ 示例 YAML</div><div class="level-yaml">${escapeHtml(lv.lesson.example_yaml)}</div></div>`;
+          }
+        }
+        card.innerHTML = html;
+        levelsDiv.appendChild(card);
+      });
+      block.appendChild(levelsDiv);
+      container.appendChild(block);
+    });
+    if (matchCount === 0) {
+      container.innerHTML = '<div class="loading">无匹配结果</div>';
+    }
+  } else if (chFilter) {
+    const filtered = allData.chapters.filter(ch => ch.chapter === chFilter);
+    render(filtered);
+  } else {
+    render(allData.chapters);
+  }
+}
+
+function toggleLessons() {
+  const show = document.getElementById('show-lesson').checked;
+  document.querySelectorAll('.lesson-section').forEach(el => {
+    el.style.display = show ? '' : 'none';
+  });
+}
+
+function toggleYaml() {
+  const show = document.getElementById('show-yaml').checked;
+  document.querySelectorAll('.yaml-section').forEach(el => {
+    el.style.display = show ? '' : 'none';
+  });
+}
+
+function toggleAll() {
+  const blocks = document.querySelectorAll('.chapter-block');
+  const allOpen = Array.from(blocks).every(b => b.classList.contains('open'));
+  blocks.forEach(b => b.classList.toggle('open', !allOpen));
+}
+
+load();
+</script>
+</body>
+</html>
