@@ -174,6 +174,34 @@ CHAPTERS_META = {
         "description": "Admission Webhook、OPA Gatekeeper、审计日志",
         "difficulty": 5,
     },
+    "ch25": {
+        "title": "多容器模式",
+        "icon": "📦",
+        "color": "#00acc1",
+        "description": "Init/Sidecar/Ambassador/Adapter，多容器设计模式",
+        "difficulty": 4,
+    },
+    "ch26": {
+        "title": "高级调度",
+        "icon": "🎯",
+        "color": "#ab47bc",
+        "description": "Topology Spread、Descheduler、调度器配置",
+        "difficulty": 5,
+    },
+    "ch27": {
+        "title": "Service Mesh",
+        "icon": "🌐",
+        "color": "#5c6bc0",
+        "description": "Istio 架构、VirtualService、DestinationRule、Gateway",
+        "difficulty": 5,
+    },
+    "ch28": {
+        "title": "CKA 模拟考试",
+        "icon": "🎓",
+        "color": "#d84315",
+        "description": "综合考核：部署、网络、存储、故障排查、RBAC",
+        "difficulty": 5,
+    },
 }
 
 # ==================== 知识点映射 ====================
@@ -319,14 +347,38 @@ KNOWLEDGE_POINTS = {
     "Q24.3": ["OPA Gatekeeper", "Constraint", "策略即代码", "Rego"],
     "Q24.4": ["Audit Policy", "审计日志", "level", "rules"],
     "Q24.5": ["多层安全防护", "Webhook+OPA+NetworkPolicy", "纵深防御", "多文档 YAML"],
+    # Ch25: 多容器模式
+    "Q25.1": ["Init Container", "initContainers", "初始化容器", "emptyDir 共享"],
+    "Q25.2": ["Sidecar 模式", "多容器 Pod", "共享卷", "边车容器"],
+    "Q25.3": ["Ambassador 模式", "代理容器", "localhost 通信", "Envoy 代理"],
+    "Q25.4": ["Adapter 模式", "适配器容器", "格式转换", "日志标准化"],
+    "Q25.5": ["多容器综合实战", "Init+Sidecar+Service", "生产级多容器应用"],
+    # Ch26: 高级调度
+    "Q26.1": ["TopologySpreadConstraints", "maxSkew", "拓扑分布约束", "whenUnsatisfiable"],
+    "Q26.2": ["PodAntiAffinity", "requiredDuringScheduling", "preferredDuringScheduling", "跨节点反亲和"],
+    "Q26.3": ["Descheduler", "RemoveDuplicates", "LowNodeUtilization", "重新调度策略"],
+    "Q26.4": ["KubeSchedulerConfiguration", "调度框架", "插件配置", "profiles"],
+    "Q26.5": ["高可用调度", "Topology Spread+PDB", "多副本+跨节点分布"],
+    # Ch27: Service Mesh
+    "Q27.1": ["Istio 架构", "控制面/数据面", "istiod", "Envoy Sidecar"],
+    "Q27.2": ["VirtualService", "流量路由", "HTTP 路由规则", "subset"],
+    "Q27.3": ["DestinationRule", "版本子集", "trafficPolicy", "负载均衡策略"],
+    "Q27.4": ["Istio Gateway", "入口网关", "servers", "selector"],
+    "Q27.5": ["Service Mesh 综合", "Gateway+VS+DR", "完整流量管理配置"],
+    # Ch28: CKA 模拟考试
+    "Q28.1": ["CKA 综合", "Deployment+Service", "资源限制", "readinessProbe"],
+    "Q28.2": ["CKA 网络", "Service+NetworkPolicy+Ingress", "网络隔离", "七层路由"],
+    "Q28.3": ["CKA 存储", "PVC+ConfigMap+Secret", "存储与配置综合"],
+    "Q28.4": ["CKA 故障排查", "selector/labels 匹配", "CrashLoopBackOff 修复"],
+    "Q28.5": ["CKA RBAC", "ServiceAccount+Role+RoleBinding", "securityContext", "最小权限"],
 }
 
 # ==================== XP 配置 ====================
 
-LEVEL_XP = {f"Q{i}.{j}": 10 for i in range(1, 25) for j in range(1, 6)}
+LEVEL_XP = {f"Q{i}.{j}": 10 for i in range(1, 29) for j in range(1, 6)}
 
 # 章节通关奖励
-CHAPTER_BONUS_XP = {f"ch{i:02d}": 50 for i in range(1, 25)}
+CHAPTER_BONUS_XP = {f"ch{i:02d}": 50 for i in range(1, 29)}
 
 # 等级称号 (总XP -> 称号)
 RANKS = [
@@ -384,6 +436,10 @@ KNOWLEDGE_DOMAINS = {
     "故障排查": ["Q22.1", "Q22.2", "Q22.3", "Q22.4", "Q22.5"],
     "监控与日志": ["Q23.1", "Q23.2", "Q23.3", "Q23.4", "Q23.5"],
     "安全策略进阶": ["Q24.1", "Q24.2", "Q24.3", "Q24.4", "Q24.5"],
+    "多容器模式": ["Q25.1", "Q25.2", "Q25.3", "Q25.4", "Q25.5"],
+    "高级调度": ["Q26.1", "Q26.2", "Q26.3", "Q26.4", "Q26.5"],
+    "Service Mesh": ["Q27.1", "Q27.2", "Q27.3", "Q27.4", "Q27.5"],
+    "CKA 综合考核": ["Q28.1", "Q28.2", "Q28.3", "Q28.4", "Q28.5"],
 }
 
 

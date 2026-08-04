@@ -59,6 +59,10 @@ def get_level(level_id: str) -> Level | None:
     from app.levels.ch22_troubleshooting import CHAPTER_22_LEVELS
     from app.levels.ch23_monitoring import CHAPTER_23_LEVELS
     from app.levels.ch24_security_advanced import CHAPTER_24_LEVELS
+    from app.levels.ch25_multi_container import CHAPTER_25_LEVELS
+    from app.levels.ch26_advanced_scheduling import CHAPTER_26_LEVELS
+    from app.levels.ch27_service_mesh import CHAPTER_27_LEVELS
+    from app.levels.ch28_cka_exam import CHAPTER_28_LEVELS
     from app.levels.cluster_practice import CLUSTER_PRACTICE_LEVELS
     all_levels = (
         CHAPTER_1_LEVELS + CHAPTER_2_LEVELS + CHAPTER_3_LEVELS
@@ -70,6 +74,8 @@ def get_level(level_id: str) -> Level | None:
         + CHAPTER_18_LEVELS + CHAPTER_19_LEVELS + CHAPTER_20_LEVELS
         + CHAPTER_21_LEVELS + CHAPTER_22_LEVELS
         + CHAPTER_23_LEVELS + CHAPTER_24_LEVELS
+        + CHAPTER_25_LEVELS + CHAPTER_26_LEVELS
+        + CHAPTER_27_LEVELS + CHAPTER_28_LEVELS
         + CLUSTER_PRACTICE_LEVELS
     )
     for lv in all_levels:
@@ -104,6 +110,10 @@ def list_levels(chapter: str | None = None) -> list[dict]:
     from app.levels.ch22_troubleshooting import CHAPTER_22_LEVELS
     from app.levels.ch23_monitoring import CHAPTER_23_LEVELS
     from app.levels.ch24_security_advanced import CHAPTER_24_LEVELS
+    from app.levels.ch25_multi_container import CHAPTER_25_LEVELS
+    from app.levels.ch26_advanced_scheduling import CHAPTER_26_LEVELS
+    from app.levels.ch27_service_mesh import CHAPTER_27_LEVELS
+    from app.levels.ch28_cka_exam import CHAPTER_28_LEVELS
     from app.levels.cluster_practice import CLUSTER_PRACTICE_LEVELS
     all_levels = (
         CHAPTER_1_LEVELS + CHAPTER_2_LEVELS + CHAPTER_3_LEVELS
@@ -115,6 +125,8 @@ def list_levels(chapter: str | None = None) -> list[dict]:
         + CHAPTER_18_LEVELS + CHAPTER_19_LEVELS + CHAPTER_20_LEVELS
         + CHAPTER_21_LEVELS + CHAPTER_22_LEVELS
         + CHAPTER_23_LEVELS + CHAPTER_24_LEVELS
+        + CHAPTER_25_LEVELS + CHAPTER_26_LEVELS
+        + CHAPTER_27_LEVELS + CHAPTER_28_LEVELS
         + CLUSTER_PRACTICE_LEVELS
     )
     if chapter is not None:

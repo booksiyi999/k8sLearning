@@ -1475,17 +1475,17 @@ class TestE2EJourney:
         return r.json()
 
     def test_report_completion_rate_100(self):
-        """报告显示完成率（60/120 = Ch1-12 全通）"""
+        """报告显示完成率（60/140 = Ch1-12 全通）"""
         data = self._generate_report()
-        assert data["completion_rate"] == 60 / 120
+        assert data["completion_rate"] == 60 / 140
         assert data["completed_count"] == 60
-        assert data["total_levels"] == 120
+        assert data["total_levels"] == 140
 
     def test_report_grade_s(self):
-        """报告评定（60/120 完成率 -> C 级）"""
+        """报告评定（60/140 完成率 ≈ 42.9% -> D 级）"""
         data = self._generate_report()
-        assert data["grade"] == "C"
-        assert "及格" in data["grade_comment"]
+        assert data["grade"] == "D"
+        assert "起步中" in data["grade_comment"]
 
     def test_report_total_xp_1200(self):
         """报告总 XP = 1200"""
@@ -1531,9 +1531,9 @@ class TestE2EJourney:
     # ---- 验证无薄弱项 ----
 
     def test_report_no_weak_areas(self):
-        """Ch13-24 未完成 -> 有薄弱项"""
+        """Ch13-28 未完成 -> 有薄弱项"""
         data = self._generate_report()
-        assert len(data["weak_areas"]) == 60  # Ch13-24 共 60 关未完成
+        assert len(data["weak_areas"]) == 80  # Ch13-28 共 80 关未完成
 
     # ---- 验证称号 ----
 
@@ -1558,22 +1558,21 @@ class TestE2EJourney:
     # ---- 验证学习建议 ----
 
     def test_report_no_recommendations(self):
-        """Ch13-24 未完成 -> 有学习建议"""
+        """Ch13-28 未完成 -> 有学习建议"""
         data = self._generate_report()
         assert len(data["recommendations"]) > 0  # 未完成章节会有建议
 
     # ---- 验证章节统计 ----
 
     def test_report_all_chapters_complete(self):
-        """Ch1-12 章节 100% 完成，Ch13-24 未完成"""
+        """Ch1-12 章节 100% 完成，Ch13-28 未完成"""
         data = self._generate_report()
         for ch_id in ["ch01", "ch02", "ch03", "ch04", "ch05", "ch06", "ch07", "ch08", "ch09", "ch10", "ch11", "ch12"]:
             ch = data["chapter_stats"][ch_id]
             assert ch["total"] == 5
             assert ch["completed"] == 5
             assert ch["rate"] == 1.0
-        for ch_id in ["ch13", "ch14", "ch15", "ch16", "ch17", "ch18",
-                       "ch19", "ch20", "ch21", "ch22", "ch23", "ch24"]:
+        for ch_id in [f"ch{i:02d}" for i in range(13, 29)]:
             ch = data["chapter_stats"][ch_id]
             assert ch["total"] == 5
             assert ch["completed"] == 0
