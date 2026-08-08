@@ -1062,3 +1062,270 @@ def _apply_volumesnapshotcontent(state: ClusterState, doc: dict) -> None:
     if not isinstance(spec, dict):
         raise K8sError("VolumeSnapshotContent 缺少 spec")
     state.volumesnapshotcontents[metadata["name"]] = doc
+
+
+# ---------------------------------------------------------------------------
+# RBAC 权限检查 & NetworkPolicy 流量模拟（P1 修复：消除假阳性）
+# ---------------------------------------------------------------------------
+
+def _get_role_rules(role_doc: dict) -> list:
+    """从 Role/ClusterRole doc 中提取 rules 列表。
+
+    Role 的 rules 可能在顶层或 spec 下（_apply_role 两种都接受），
+    ClusterRole 的 rules 在顶层。
+    """
+    rules = role_doc.get("rules")
+    if not isinstance(rules, list):
+        rules = role_doc.get("spec", {}).get("rules", [])
+    if not isinstance(rules, list):
+        return []
+    return rules
+
+
+def _match_labels(pod_labels: dict, selector: dict) -> bool:
+    """检查 pod 的 labels 是否匹配 selector（matchLabels 语义）。
+
+    selector 为空 dict {} 表示匹配所有 Pod（K8s 中 podSelector: {} 的含义）。
+    """
+    if not selector:
+        return True
+    match_labels = selector.get("matchLabels", {})
+    if not isinstance(match_labels, dict):
+        return True  # 无 matchLabels，视为匹配所有
+    for k, v in match_labels.items():
+        if pod_labels.get(k) != v:
+            return False
+    return True
+
+
+def simulate_rbac_check(
+    state: ClusterState, sa_name: str, verb: str, resource: str
+) -> bool:
+    """模拟 kubectl auth can-i 逻辑。
+
+    遍历所有 RoleBinding / ClusterRoleBinding，找到绑定到指定 SA 的绑定，
+    然后检查对应 Role / ClusterRole 的 rules 是否授予请求的 verb + resource。
+
+    Args:
+        state: 集群状态
+        sa_name: ServiceAccount 名称
+        verb: 请求的操作（get, list, create, delete, ...）
+        resource: 请求的资源类型（pods, services, ...）
+
+    Returns:
+        True 如果 SA 被授予了该权限，False 否则
+    """
+    # 收集所有绑定到该 SA 的 Role/ClusterRole doc
+    roles_to_check: list[dict] = []
+
+    # --- RoleBinding（命名空间级绑定） ---
+    for rb in state.rolebindings.values():
+        subjects = rb.get("subjects")
+        if not isinstance(subjects, list):
+            continue
+        sa_bound = any(
+            isinstance(s, dict)
+            and s.get("kind") == "ServiceAccount"
+            and s.get("name") == sa_name
+            for s in subjects
+        )
+        if not sa_bound:
+            continue
+        role_ref = rb.get("roleRef")
+        if not isinstance(role_ref, dict):
+            continue
+        ref_kind = role_ref.get("kind", "")
+        ref_name = role_ref.get("name", "")
+        if ref_kind == "Role" and ref_name in state.roles:
+            roles_to_check.append(state.roles[ref_name])
+        elif ref_kind == "ClusterRole" and ref_name in state.clusterroles:
+            roles_to_check.append(state.clusterroles[ref_name])
+
+    # --- ClusterRoleBinding（集群级绑定） ---
+    for crb in state.clusterrolebindings.values():
+        subjects = crb.get("subjects")
+        if not isinstance(subjects, list):
+            continue
+        sa_bound = any(
+            isinstance(s, dict)
+            and s.get("kind") == "ServiceAccount"
+            and s.get("name") == sa_name
+            for s in subjects
+        )
+        if not sa_bound:
+            continue
+        role_ref = crb.get("roleRef")
+        if not isinstance(role_ref, dict):
+            continue
+        ref_kind = role_ref.get("kind", "")
+        ref_name = role_ref.get("name", "")
+        # ClusterRoleBinding 只能引用 ClusterRole
+        if ref_kind == "ClusterRole" and ref_name in state.clusterroles:
+            roles_to_check.append(state.clusterroles[ref_name])
+
+    # --- 检查每个 Role/ClusterRole 的 rules ---
+    for role_doc in roles_to_check:
+        for rule in _get_role_rules(role_doc):
+            if not isinstance(rule, dict):
+                continue
+            verbs = rule.get("verbs", [])
+            resources = rule.get("resources", [])
+            if not isinstance(verbs, list) or not isinstance(resources, list):
+                continue
+            # verb 匹配：精确匹配或通配符 '*'
+            verb_ok = verb in verbs or "*" in verbs
+            # resource 匹配：精确匹配或通配符 '*'
+            resource_ok = resource in resources or "*" in resources
+            if verb_ok and resource_ok:
+                return True
+
+    return False
+
+
+def _from_matches_pod(
+    src_labels: dict, src_namespace: str, from_element: dict
+) -> bool:
+    """检查 NetworkPolicy ingress.from 的单个元素是否匹配源 Pod。
+
+    from 元素可包含:
+    - podSelector: 按 Pod 标签选择（同命名空间）
+    - namespaceSelector: 按命名空间标签选择
+    - 两者同时存在时为 AND 逻辑
+    - 空元素 {} 表示匹配所有来源
+    """
+    if not from_element:
+        return True  # 空 from 元素 -> 匹配所有
+
+    # podSelector 匹配
+    pod_sel = from_element.get("podSelector")
+    pod_match = True
+    if isinstance(pod_sel, dict) and pod_sel:
+        pod_match = _match_labels(src_labels, pod_sel)
+
+    # namespaceSelector 匹配
+    ns_sel = from_element.get("namespaceSelector")
+    ns_match = True
+    if isinstance(ns_sel, dict) and ns_sel:
+        ns_labels = ns_sel.get("matchLabels", {})
+        if isinstance(ns_labels, dict) and ns_labels:
+            # K8s 1.21+ 自动添加 kubernetes.io/metadata.name 标签
+            expected_ns = ns_labels.get("kubernetes.io/metadata.name")
+            if expected_ns is not None:
+                ns_match = (src_namespace == expected_ns)
+
+    return pod_match and ns_match
+
+
+def simulate_traffic(
+    state: ClusterState, src_pod: str, dst_pod: str, port: int
+) -> dict:
+    """模拟 NetworkPolicy 流量检查。
+
+    模拟 K8s NetworkPolicy 的 ingress 流量判定逻辑:
+    a. 如果没有任何 NetworkPolicy 选择 dst_pod -> 默认允许（K8s 默认行为）
+    b. 如果有 NetworkPolicy 选择 dst_pod（ingress 策略）:
+       - 检查是否有策略的 from 字段允许 src_pod
+       - 检查是否有策略的 ports 字段允许请求的 port
+       - 多个策略叠加：任一策略允许即放行
+    c. 返回是否允许和匹配的策略名列表
+
+    Args:
+        state: 集群状态
+        src_pod: 源 Pod 名称
+        dst_pod: 目标 Pod 名称
+        port: 请求的端口号
+
+    Returns:
+        {"allowed": bool, "matched_policies": [str]}
+    """
+    # 获取 dst_pod / src_pod 的 labels 和 namespace
+    dst_pod_doc = state.pods.get(dst_pod)
+    if not isinstance(dst_pod_doc, dict):
+        return {"allowed": False, "matched_policies": []}
+    dst_meta = dst_pod_doc.get("metadata", {})
+    if not isinstance(dst_meta, dict):
+        dst_meta = {}
+    dst_labels = dst_meta.get("labels", {})
+    if not isinstance(dst_labels, dict):
+        dst_labels = {}
+
+    src_pod_doc = state.pods.get(src_pod)
+    if not isinstance(src_pod_doc, dict):
+        return {"allowed": False, "matched_policies": []}
+    src_meta = src_pod_doc.get("metadata", {})
+    if not isinstance(src_meta, dict):
+        src_meta = {}
+    src_labels = src_meta.get("labels", {})
+    if not isinstance(src_labels, dict):
+        src_labels = {}
+    src_namespace = src_meta.get("namespace", "default")
+
+    # 找到所有选择 dst_pod 且管控 Ingress 的 NetworkPolicy
+    matched_policies: list[str] = []
+    for np_name, np in state.networkpolicies.items():
+        spec = np.get("spec")
+        if not isinstance(spec, dict):
+            continue
+        policy_types = spec.get("policyTypes", [])
+        if not isinstance(policy_types, list) or "Ingress" not in policy_types:
+            continue
+        pod_selector = spec.get("podSelector", {})
+        if not isinstance(pod_selector, dict):
+            pod_selector = {}
+        # 检查 dst_pod 是否被此 policy 选择
+        if not _match_labels(dst_labels, pod_selector):
+            continue
+        matched_policies.append(np_name)
+
+    # a. 没有 NetworkPolicy 选择 dst_pod -> 默认允许
+    if not matched_policies:
+        return {"allowed": True, "matched_policies": []}
+
+    # b. 有策略选择 dst_pod，检查是否有策略允许此流量
+    for np_name in matched_policies:
+        np = state.networkpolicies[np_name]
+        spec = np.get("spec", {})
+        ingress_rules = spec.get("ingress")
+        # 如果没有 ingress 规则，此策略拒绝所有入站
+        if not isinstance(ingress_rules, list) or not ingress_rules:
+            continue
+        for rule in ingress_rules:
+            if not isinstance(rule, dict):
+                continue
+
+            # --- 检查 from 是否匹配 src_pod ---
+            from_list = rule.get("from")
+            source_ok = False
+            # from 缺失或空列表 -> 允许所有来源（K8s 语义）
+            if not isinstance(from_list, list) or not from_list:
+                source_ok = True
+            else:
+                for src_elem in from_list:
+                    if not isinstance(src_elem, dict):
+                        continue
+                    if _from_matches_pod(src_labels, src_namespace, src_elem):
+                        source_ok = True
+                        break
+            if not source_ok:
+                continue
+
+            # --- 检查 ports 是否匹配请求的端口 ---
+            ports_list = rule.get("ports")
+            port_ok = False
+            # ports 缺失或空列表 -> 允许所有端口（K8s 语义）
+            if not isinstance(ports_list, list) or not ports_list:
+                port_ok = True
+            else:
+                for p in ports_list:
+                    if not isinstance(p, dict):
+                        continue
+                    if p.get("port") == port:
+                        port_ok = True
+                        break
+
+            # from 和 ports 都匹配 -> 此策略允许流量
+            if source_ok and port_ok:
+                return {"allowed": True, "matched_policies": matched_policies}
+
+    # c. 有策略选择 dst_pod 但没有策略允许此流量 -> 拒绝
+    return {"allowed": False, "matched_policies": matched_policies}

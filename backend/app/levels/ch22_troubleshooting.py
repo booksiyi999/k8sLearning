@@ -2,8 +2,8 @@
 
 Q22.1 Pod 状态诊断 - fix CrashLoopBackOff scenario
 Q22.2 Service 连通性排查 - validate Service+Endpoints fix
-Q22.3 Node NotReady - validate node troubleshooting steps
-Q22.4 控制平面故障 - validate control plane component checks
+Q22.3 CrashLoopBackOff - fix args causing exit code 1
+Q22.4 Pending Pod - fix resource requests causing scheduling failure
 Q22.5 集群实战 - complete troubleshooting workflow
 """
 from app.validator import Level, CheckResult, Lesson
@@ -563,476 +563,768 @@ spec:
 )
 
 
-# ==================== Q22.3 Node NotReady ====================
+# ==================== Q22.3 CrashLoopBackOff 故障排查 ====================
 
-def _check_223_node_notready(user_input: str) -> CheckResult:
-    """Q22.3 Node NotReady 故障排查 - 验证排查命令"""
-    text = user_input.strip()
+def _check_223_crashloop_fix(user_yaml: str) -> CheckResult:
+    """Q22.3 CrashLoopBackOff 故障排查 - 提交修复后的 Pod YAML
 
-    if not text:
+    场景: 一个 Pod 因为 args 配置错误（exit 1）导致 CrashLoopBackOff。
+    用户需要按排查流程（describe -> logs -> events -> fix）理解问题，
+    然后提交修正后的 Pod YAML，确保容器能正常启动。
+    """
+    try:
+        state = ClusterState()
+        state = apply_manifest(state, user_yaml)
+    except K8sError as e:
+        return CheckResult(ok=False, error=str(e), hints=[])
+
+    if not state.pods:
         return CheckResult(
             ok=False,
-            error="请输入故障排查命令",
-            hints=["使用 kubectl 命令排查 Node NotReady 问题"],
+            error="没有创建任何 Pod",
+            hints=["你需要 apply 一个 kind: Pod 的 YAML"],
         )
 
-    lower = text.lower()
+    pod_name = next(iter(state.pods))
+    pod = state.pods[pod_name]
+    spec = pod.get("spec", {})
+    if not isinstance(spec, dict):
+        return CheckResult(ok=False, error="Pod 缺少 spec", hints=[])
 
-    # 检查 kubectl
-    if "kubectl" not in lower:
+    containers = spec.get("containers", [])
+    if not isinstance(containers, list) or not containers:
+        return CheckResult(ok=False, error="Pod 缺少 containers", hints=[])
+
+    c = containers[0]
+    if not isinstance(c, dict):
+        return CheckResult(ok=False, error="containers[0] 格式错误", hints=[])
+
+    # 检查 image
+    image = c.get("image", "")
+    if not image:
         return CheckResult(
             ok=False,
-            error="命令中缺少 kubectl",
-            hints=["使用 kubectl 命令排查节点问题"],
+            error="容器缺少 image",
+            hints=["CrashLoopBackOff 可能是镜像问题，确保 image 正确"],
         )
 
-    # 检查包含 get nodes 或 describe node
-    has_get_nodes = "get nodes" in lower or "get node" in lower
-    has_describe_node = "describe node" in lower
+    # 收集 command 和 args 的完整文本
+    command = c.get("command", [])
+    args = c.get("args", [])
 
-    if not has_get_nodes and not has_describe_node:
-        return CheckResult(
-            ok=False,
-            error="缺少节点排查命令",
-            hints=["使用 kubectl get nodes 查看节点状态，或 kubectl describe node <name> 查看详情"],
-        )
+    all_parts = []
+    if isinstance(command, list):
+        all_parts.extend(str(x) for x in command)
+    elif isinstance(command, str):
+        all_parts.append(command)
+    if isinstance(args, list):
+        all_parts.extend(str(x) for x in args)
+    elif isinstance(args, str):
+        all_parts.append(args)
 
-    # 检查是否包含具体的排查动作（describe 或 events 或 logs）
-    has_events = "events" in lower
-    has_describe = "describe" in lower
-    has_logs = "logs" in lower
-    has_journalctl = "journalctl" in lower
+    cmd_str = " ".join(all_parts).lower()
 
-    if not (has_events or has_describe or has_logs or has_journalctl):
-        return CheckResult(
-            ok=False,
-            error="排查命令不够深入",
-            hints=[
-                "进一步排查: kubectl describe node <name> 查看事件",
-                "或 kubectl get events 查看集群事件",
-                "或 journalctl -u kubelet 查看 kubelet 日志",
-            ],
-        )
+    # 拒绝明显会导致崩溃的命令/参数
+    # 原始问题: args: ["echo starting && exit 1"] 导致容器退出码 1
+    crash_patterns = ["exit 1", "exit 1", "--crash", "--invalid-flag", "&& exit", "exit 1"]
+    for pattern in crash_patterns:
+        if pattern in cmd_str:
+            return CheckResult(
+                ok=False,
+                error=f"command/args 中仍包含会导致崩溃的内容: '{pattern}'",
+                hints=[
+                    "原始 Pod 的 args 为 ['echo starting && exit 1']，容器启动后立即退出",
+                    "排查流程: kubectl describe pod -> kubectl logs -> 查看 Events -> 修复 YAML",
+                    "修正 args 让容器持续运行，如 ['nginx', '-g', 'daemon off;']",
+                ],
+            )
+
+    # 检查 command 中没有 'false' 或 'exit' 等立即退出的命令
+    if isinstance(command, list) and command:
+        first_cmd = str(command[0]).lower()
+        if first_cmd in ("false", "exit", "true"):
+            return CheckResult(
+                ok=False,
+                error=f"command '{first_cmd}' 会导致容器立即退出",
+                hints=["使用能持续运行的命令，如 'nginx' 或 'sleep'"],
+            )
+
+    # 修复后的 Pod 应该有正确的 command 或 args，或者使用能默认启动的镜像
+    has_command = bool(command) if isinstance(command, list) else bool(command)
+    has_args = bool(args) if isinstance(args, list) else bool(args)
+
+    if not has_command and not has_args:
+        # 允许没有 command/args 但使用已知能默认启动的镜像
+        known_good_images = ["nginx", "redis", "busybox", "python", "node", "alpine", "httpd", "memcached"]
+        if not any(img in image.lower() for img in known_good_images):
+            return CheckResult(
+                ok=False,
+                error="容器缺少 command 或 args，且镜像可能无法默认启动",
+                hints=[
+                    "添加正确的 command 或 args 让容器持续运行",
+                    "或使用能默认启动的镜像（如 nginx:1.25）",
+                ],
+            )
 
     return CheckResult(
-        ok=True, state=ClusterState(),
-        hints=["节点排查思路正确！describe/events/journalctl 是排查 Node NotReady 的利器 ⚡"],
+        ok=True, state=state,
+        hints=["CrashLoopBackOff 修复成功！describe -> logs -> events -> fix 是标准排查流程 🔍"],
     )
 
 
 LEVEL_Q22_3 = Level(
     id="Q22.3",
     chapter="ch22",
-    title="Node NotReady 排查",
+    title="CrashLoopBackOff 故障排查",
     description="""
-# Node NotReady 排查 ⚡
+# CrashLoopBackOff 故障排查 🔍
 
-集群中一个节点状态变为 `NotReady`，需要排查原因。
+一个 Pod 陷入了 `CrashLoopBackOff` 状态。容器不断崩溃重启，需要你按照排查流程定位问题并修复。
 
 ## 场景
 
+故障 Pod 的 YAML（有问题）：
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-pod
+spec:
+  containers:
+  - name: app
+    image: nginx:1.25
+    command: ["/bin/sh", "-c"]
+    args: ["echo starting && exit 1"]  # ← 问题！容器启动后立即退出（exit code 1）
 ```
-$ kubectl get nodes
-NAME       STATUS     ROLES           AGE   VERSION
-master     Ready      control-plane   30d   v1.28.0
-worker-1   NotReady   <none>          30d   v1.28.0
+
+模拟排查输出：
+```
+$ kubectl get pods
+NAME      READY   STATUS             RESTARTS   AGE
+app-pod   0/1     CrashLoopBackOff   5          2m
+
+$ kubectl describe pod app-pod
+...
+Containers:
+  app:
+    State:       Waiting
+    Reason:      CrashLoopBackOff
+    Last State:  Terminated
+      Reason:    Completed
+      Exit Code: 1    # ← 退出码 1，应用主动退出
+Events:
+  Warning  BackOff    5s (x6)  kubelet  Back-off restarting failed container
+
+$ kubectl logs app-pod
+starting    # ← 只输出了 "starting" 就退出了
+```
+
+## 排查流程
+
+```
+1. kubectl get pods              -> 确认 CrashLoopBackOff 状态
+2. kubectl describe pod app-pod  -> 查看 Exit Code 和 Events
+3. kubectl logs app-pod          -> 查看容器日志（输出 "starting" 后退出）
+4. 定位问题: args 中的 "exit 1" 导致容器立即退出
+5. 修复 YAML: 修正 args 让容器持续运行
 ```
 
 ## 任务
 
-编写排查 Node NotReady 的命令，至少包含：
-- 使用 `kubectl get nodes` 或 `kubectl describe node` 查看节点状态
-- 使用 `kubectl describe`、`kubectl get events` 或 `journalctl` 进一步排查
+提交修正后的 Pod YAML：
+- 修正 `command` 和 `args`，让容器能正常持续运行
+- 确保 `image` 正确
+- 不能包含 `exit 1` 或其他会导致立即退出的命令
 
 ## 提示
 
-排查流程：
-```bash
-# 1. 查看节点状态
-kubectl get nodes
+修复后的 YAML（使用 nginx 默认启动命令）：
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-pod
+spec:
+  containers:
+  - name: app
+    image: nginx:1.25
+    command: ["nginx", "-g", "daemon off;"]
+```
 
-# 2. 查看节点详情和事件
-kubectl describe node worker-1
-
-# 3. 查看集群事件
-kubectl get events --field-selector involvedObject.kind=Node
-
-# 4. 查看 kubelet 日志
-journalctl -u kubelet -f
+或者直接移除 command/args，让 nginx 使用默认启动命令：
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-pod
+spec:
+  containers:
+  - name: app
+    image: nginx:1.25
 ```
 """,
     starter_yaml="""\
-# 输入 Node NotReady 排查命令
-# 1. kubectl get nodes
-# 2. kubectl describe node <name>  或  kubectl get events
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-pod
+spec:
+  containers:
+  - name: app
+    image: nginx:1.25
+    command: ["/bin/sh", "-c"]
+    args: ["echo starting && exit 1"]  # ← 修复这个 args
 """,
-    check_fn=_check_223_node_notready,
+    check_fn=_check_223_crashloop_fix,
     lesson=Lesson(
         concept="""\
-## Node NotReady 排查
+## CrashLoopBackOff 排查流程
 
-节点状态变为 `NotReady` 表示 kubelet 无法正常与 API Server 通信，或节点本身出现了问题。
+`CrashLoopBackOff` 表示容器反复崩溃并被 kubelet 重启。排查需要遵循 **describe -> logs -> events -> fix** 的标准流程。
 
-### NotReady 的常见原因
-
-| 原因 | 症状 | 排查方法 |
-|------|------|----------|
-| kubelet 停止 | 节点 NotReady | `systemctl status kubelet` |
-| kubelet 无法访问 API Server | 节点 NotReady | `journalctl -u kubelet` |
-| 节点资源耗尽 | 节点 NotReady | `kubectl describe node` |
-| 网络分区 | 节点 NotReady | `ping <api-server>` |
-| 容器运行时故障 | 节点 NotReady | `systemctl status containerd` |
-| 磁盘压力 | 节点 DiskPressure | `df -h` |
-| 内存压力 | 节点 MemoryPressure | `free -m` |
-| PID 耗尽 | 节点 PIDPressure | `ps aux | wc -l` |
-
-### 排查流程
+### 排查步骤详解
 
 ```
-1. kubectl get nodes               → 确认哪些节点 NotReady
-2. kubectl describe node <name>    → 查看条件和事件
-3. ssh 到节点                       → 检查系统级问题
-4. systemctl status kubelet        → kubelet 是否运行
-5. journalctl -u kubelet           → kubelet 日志
-6. systemctl status containerd     → 容器运行时状态
-7. df -h / free -m                 → 磁盘/内存资源
-8. ping <api-server-ip>            → 网络连通性
+Step 1: kubectl get pods
+  -> 确认 Pod 处于 CrashLoopBackOff 状态
+  -> 查看 RESTARTS 次数（频繁重启说明问题持续存在）
+
+Step 2: kubectl describe pod <pod-name>
+  -> 查看 Containers 部分:
+     - State: Waiting, Reason: CrashLoopBackOff
+     - Last State: Terminated
+       - Exit Code: 0 = 正常退出（但不应退出）
+       - Exit Code: 1 = 应用错误
+       - Exit Code: 137 = OOMKilled（内存不足）
+       - Exit Code: 126/127 = 命令不存在
+  -> 查看 Events 部分: BackOff 重启事件
+
+Step 3: kubectl logs <pod-name>
+  -> 查看当前容器日志
+  -> 如果日志为空，使用 kubectl logs <pod-name> --previous
+     查看上次崩溃前的日志（非常关键！）
+
+Step 4: 根据日志定位问题并修复
+  -> 命令/参数错误 -> 修正 command/args
+  -> 镜像不存在 -> 修正 image
+  -> 配置错误 -> 修正 ConfigMap/Secret 引用
+  -> OOMKilled -> 增加 resources.limits.memory
 ```
 
-### 节点条件（Conditions）
+### Exit Code 对照表
 
-`kubectl describe node` 中的 Conditions 部分：
-
-| 条件 | 含义 |
-|------|------|
-| Ready | 节点是否健康（True=正常, False=NotReady, Unknown=失联） |
-| DiskPressure | 磁盘空间不足 |
-| MemoryPressure | 内存不足 |
-| PIDPressure | 进程数不足 |
-| NetworkUnavailable | 网络配置不正确 |
+| Exit Code | 含义 | 常见原因 |
+|-----------|------|----------|
+| 0 | 正常退出 | 容器任务完成后退出（非长期运行服务） |
+| 1 | 应用错误 | 应用启动失败、配置错误 |
+| 125 | Docker 错误 | 容器运行时问题 |
+| 126 | 命令不可执行 | 权限不足 |
+| 127 | 命令未找到 | command/args 指定了不存在的二进制 |
+| 137 | OOMKilled | 内存不足被 kill（SIGKILL） |
+| 139 | 段错误 | 应用 crash（SIGSEGV） |
+| 143 | 正常终止 | 收到 SIGTERM 后正常退出 |
 """,
         key_fields=[
-            {"name": "kubectl get nodes", "description": "查看所有节点状态", "required": True, "example": "kubectl get nodes"},
-            {"name": "kubectl describe node", "description": "查看节点详情、条件和事件", "required": True, "example": "kubectl describe node worker-1"},
-            {"name": "journalctl -u kubelet", "description": "查看 kubelet 服务日志", "required": False, "example": "journalctl -u kubelet -f"},
-            {"name": "systemctl status kubelet", "description": "检查 kubelet 服务状态", "required": False, "example": "systemctl status kubelet"},
+            {"name": "command", "description": "容器启动命令，错误命令导致 CrashLoopBackOff", "required": True, "example": "[\"nginx\", \"-g\", \"daemon off;\"]"},
+            {"name": "args", "description": "容器启动参数，错误参数导致应用退出", "required": False, "example": "[\"--config\", \"/etc/app/config.yaml\"]"},
+            {"name": "image", "description": "容器镜像，错误镜像导致启动失败", "required": True, "example": "nginx:1.25"},
+            {"name": "Exit Code", "description": "describe 中显示的退出码，帮助定位问题", "required": False, "example": "1（应用错误）, 137（OOMKilled）"},
         ],
         diagram="""\
-  Node NotReady 排查流程
+  CrashLoopBackOff 排查流程
 
   ┌──────────────┐
-  │ kubectl get  │     worker-1: NotReady
-  │ nodes        │ ──────────────────────┐
+  │ kubectl get  │     CrashLoopBackOff
+  │ pods         │ ──────────────────────┐
   └──────┬───────┘                       │
          ▼                               │
-  ┌──────────────────┐                   │
-  │ kubectl describe │  Conditions:      │
-  │ node worker-1    │  Ready: False     │
-  │                  │  DiskPressure:True│
-  └──────┬───────────┘  (找到原因!)      │
-         │                               │
+  ┌──────────────┐                       │
+  │ kubectl      │     Last State:       │
+  │ describe pod │     Exit Code: 1      │
+  │              │     Events: BackOff   │
+  └──────┬───────┘                       │
          ▼                               │
-  ┌──────────────────┐                   │
-  │ SSH 到节点       │                   │
-  │                  │                   │
-  │ systemctl status │  kubelet: running │
-  │   kubelet        │                   │
-  │                  │                   │
-  │ journalctl -u    │  "disk pressure   │
-  │   kubelet        │   detected"       │
-  └──────┬───────────┘                   │
-         │                               │
-         ▼                               │
-  ┌──────────────────┐                   │
-  │ 修复问题         │                   │
-  │ - 清理磁盘空间   │                   │
-  │ - 重启 kubelet   │                   │
-  │ - 检查容器运行时 │                   │
-  └──────────────────┘                   │
-                                         │
-  验证: kubectl get nodes ────────────────┘
-         worker-1: Ready ✅
+  ┌──────────────┐                       │
+  │ kubectl logs │     "starting"        │
+  │ <pod>        │ <─────────────────────┘
+  └──────┬───────┘
+         │ 如果当前日志为空
+         ▼
+  ┌──────────────────────┐
+  │ kubectl logs         │
+  │ <pod> --previous     │  ← 查看崩溃前日志
+  └──────────┬───────────┘
+             │
+             ▼
+  ┌──────────────────────┐
+  │  修复 command/args   │
+  │  kubectl apply -f    │
+  └──────────────────────┘
 """,
         example_yaml="""\
-# Node NotReady 排查命令
+# 修复 CrashLoopBackOff
 
-# 1. 查看节点状态
-kubectl get nodes
+# 问题 YAML（崩溃）:
+# command: ["/bin/sh", "-c"]
+# args: ["echo starting && exit 1"]
 
-# 2. 查看节点详情
-kubectl describe node worker-1
+# 修复方案 1: 使用 nginx 启动命令
+apiVersion: v1
+kind: Pod
+metadata:
+  name: app-pod
+spec:
+  containers:
+  - name: app
+    image: nginx:1.25
+    command: ["nginx", "-g", "daemon off;"]
 
-# 3. 查看节点相关事件
-kubectl get events --field-selector involvedObject.kind=Node
-
-# 4. SSH 到节点检查 kubelet
-ssh worker-1
-systemctl status kubelet
-journalctl -u kubelet --since "1 hour ago"
-
-# 5. 检查容器运行时
-systemctl status containerd
-
-# 6. 检查资源
-df -h
-free -m
+# 修复方案 2: 移除 command/args，使用镜像默认入口
+# apiVersion: v1
+# kind: Pod
+# metadata:
+#   name: app-pod
+# spec:
+#   containers:
+#   - name: app
+#     image: nginx:1.25
 """,
         common_errors=[
-            "只看 kubectl get nodes 不深入 describe，找不到具体原因",
-            "忘记检查 kubelet 服务状态和日志",
-            "忽略 DiskPressure/MemoryPressure 等条件",
-            "不检查容器运行时（containerd/docker）状态",
+            "只看当前日志不看 --previous，看不到崩溃前的错误信息",
+            "command 使用 shell 内置命令（如 echo）但未指定 /bin/sh -c",
+            "args 中包含 exit 1 或 false 等立即退出的命令",
+            "livenessProbe 检测路径错误，导致健康检查失败触发重启",
         ],
         tips=[
-            "kubectl describe node 的 Conditions 和 Events 部分是排查关键",
-            "journalctl -u kubelet --since '10 min ago' 查看最近的 kubelet 日志",
-            "节点 NotReady 后，Pod 会在 node-monitor-grace-period 后被驱逐",
-            "检查节点上的磁盘空间，磁盘满会导致 kubelet 无法正常工作",
+            "kubectl logs --previous 是排查 CrashLoopBackOff 的利器",
+            "用 kubectl describe pod 查看 Last State 中的 Exit Code",
+            "Exit Code 137 = OOMKilled，需要增加内存限制",
+            "Exit Code 127 = 命令未找到，检查 command/args 拼写",
         ],
     ),
 )
 
+# ==================== Q22.4 Pending Pod 故障排查 ====================
 
-# ==================== Q22.4 控制平面故障 ====================
+def _check_224_pending_fix(user_yaml: str) -> CheckResult:
+    """Q22.4 Pending Pod 故障排查 - 提交修复后的 Pod YAML
 
-def _check_224_control_plane(user_input: str) -> CheckResult:
-    """Q22.4 控制平面故障排查 - 验证排查命令"""
-    text = user_input.strip()
+    场景: 一个 Pod 因为 resources.requests 过大（100 CPU / 512Gi 内存），
+    没有节点能满足调度需求，一直处于 Pending 状态。
+    用户需要按排查流程（describe -> events -> 定位原因 -> fix）理解问题，
+    然后提交修正后的 Pod YAML，确保资源请求合理。
+    """
+    try:
+        state = ClusterState()
+        state = apply_manifest(state, user_yaml)
+    except K8sError as e:
+        return CheckResult(ok=False, error=str(e), hints=[])
 
-    if not text:
+    if not state.pods:
         return CheckResult(
             ok=False,
-            error="请输入控制平面排查命令",
-            hints=["使用 kubectl 检查控制平面组件状态"],
+            error="没有创建任何 Pod",
+            hints=["你需要 apply 一个 kind: Pod 的 YAML"],
         )
 
-    lower = text.lower()
+    pod_name = next(iter(state.pods))
+    pod = state.pods[pod_name]
+    spec = pod.get("spec", {})
+    if not isinstance(spec, dict):
+        return CheckResult(ok=False, error="Pod 缺少 spec", hints=[])
 
-    # 检查 kubectl
-    if "kubectl" not in lower:
+    containers = spec.get("containers", [])
+    if not isinstance(containers, list) or not containers:
+        return CheckResult(ok=False, error="Pod 缺少 containers", hints=[])
+
+    c = containers[0]
+    if not isinstance(c, dict):
+        return CheckResult(ok=False, error="containers[0] 格式错误", hints=[])
+
+    # 检查 image
+    image = c.get("image", "")
+    if not image:
         return CheckResult(
             ok=False,
-            error="命令中缺少 kubectl",
-            hints=["使用 kubectl 命令检查控制平面"],
+            error="容器缺少 image",
+            hints=["Pending Pod 排查后仍需要正确的 image"],
         )
 
-    # 检查包含组件检查命令
-    has_get_pods = "get pods" in lower
-    has_get_componentstatuses = "componentstatuses" in lower or "cs" in lower.split()
-    has_get_pods_kube_system = "kube-system" in lower
-    has_logs = "logs" in lower
+    # ── 核心校验：resources.requests 必须合理 ──
+    # 原始问题: requests.cpu = "100", requests.memory = "512Gi"
+    # 没有节点能满足，导致 Pending（FailedScheduling）
+    resources = c.get("resources", {})
+    if not isinstance(resources, dict):
+        resources = {}
 
-    # 至少要有一种控制平面检查方式
-    if not (has_get_pods or has_get_componentstatuses or has_logs):
+    requests = resources.get("requests", {})
+    if not isinstance(requests, dict):
+        requests = {}
+
+    # 解析 CPU 请求值（支持 "100" / "100m" / 100 等格式）
+    cpu_request = requests.get("cpu")
+    cpu_millicores = _parse_cpu(cpu_request)
+
+    # 解析 Memory 请求值（支持 "512Gi" / "512Mi" / 536870912 等格式）
+    mem_request = requests.get("memory")
+    mem_mib = _parse_memory(mem_request)
+
+    # 合理的资源请求上限（单节点典型容量）
+    # CPU: 64 核 = 64000m（远超大多数节点）
+    # Memory: 256Gi = 262144 Mi
+    MAX_CPU_M = 64000       # 64 cores
+    MAX_MEM_MIB = 262144    # 256 Gi
+
+    if cpu_millicores is not None and cpu_millicores > MAX_CPU_M:
         return CheckResult(
             ok=False,
-            error="缺少控制平面组件检查命令",
+            error=f"CPU 请求 {cpu_millicores}m 仍然过大（上限 {MAX_CPU_M}m = 64 核）",
             hints=[
-                "kubectl get pods -n kube-system 检查控制平面 Pod",
-                "kubectl get componentstatuses 检查组件健康状态",
+                "原始 Pod 请求 100 CPU，没有节点能满足",
+                "kubectl describe pod 显示 Events: FailedScheduling, Insufficient cpu",
+                "将 requests.cpu 减小到合理值，如 '500m' 或 '1'",
             ],
         )
 
-    # 检查是否包含对具体组件的检查
-    has_api_server = "kube-apiserver" in lower or "apiserver" in lower
-    has_etcd = "etcd" in lower
-    has_scheduler = "scheduler" in lower
-    has_controller = "controller" in lower
-    has_kube_system = "kube-system" in lower
-
-    if not (has_api_server or has_etcd or has_scheduler or has_controller or has_kube_system):
+    if mem_mib is not None and mem_mib > MAX_MEM_MIB:
         return CheckResult(
             ok=False,
-            error="需要检查具体的控制平面组件",
+            error=f"内存请求 {mem_mib}Mi 仍然过大（上限 {MAX_MEM_MIB}Mi = 256Gi）",
             hints=[
-                "检查 kube-system 命名空间的 Pod",
-                "或检查 kube-apiserver, etcd, kube-scheduler, kube-controller-manager",
+                "原始 Pod 请求 512Gi 内存，没有节点能满足",
+                "kubectl describe pod 显示 Events: FailedScheduling, Insufficient memory",
+                "将 requests.memory 减小到合理值，如 '512Mi' 或 '1Gi'",
             ],
         )
+
+    # 检查是否提供了合理的资源请求（修复后应该有 resources.requests）
+    # 原始 YAML 有不合理的 requests，修复后应该有合理的 requests 或移除 requests
+    has_requests = bool(requests)
+    if has_requests:
+        # 有 requests 是好的，只要值合理（已在上面校验）
+        pass
+    else:
+        # 没有 requests 也可以接受（让调度器自由分配）
+        # 但提示用户添加 resources 更好
+        pass
+
+    # 额外检查：如果有 nodeSelector，也是合理的修复方式
+    # （场景中也可以通过添加 nodeSelector 指定有足够资源的节点）
+    node_selector = spec.get("nodeSelector")
+    if isinstance(node_selector, dict) and node_selector:
+        # 有 nodeSelector 是有效的修复策略
+        pass
 
     return CheckResult(
-        ok=True, state=ClusterState(),
-        hints=["控制平面排查思路正确！确保所有组件 Pod Running 🎛️"],
+        ok=True, state=state,
+        hints=["Pending Pod 修复成功！describe -> events -> 定位资源不足 -> 修复 requests ⚡"],
     )
+
+
+def _parse_cpu(cpu_val) -> int | None:
+    """将 CPU 请求值解析为 millicores（整数毫核）。
+
+    支持: "100" -> 100000, "500m" -> 500, "1" -> 1000, 100 (int) -> 100000
+    返回 None 表示无法解析或未指定。
+    """
+    if cpu_val is None:
+        return None
+    if isinstance(cpu_val, (int, float)):
+        return int(cpu_val * 1000)
+    if isinstance(cpu_val, str):
+        cpu_val = cpu_val.strip()
+        if cpu_val.endswith("m"):
+            try:
+                return int(cpu_val[:-1])
+            except ValueError:
+                return None
+        else:
+            try:
+                return int(float(cpu_val) * 1000)
+            except ValueError:
+                return None
+    return None
+
+
+def _parse_memory(mem_val) -> int | None:
+    """将 Memory 请求值解析为 MiB（整数兆字节）。
+
+    支持: "512Gi" -> 524288, "512Mi" -> 512, "1Gi" -> 1024, 536870912 (int bytes) -> 512
+    返回 None 表示无法解析或未指定。
+    """
+    if mem_val is None:
+        return None
+    if isinstance(mem_val, (int, float)):
+        # 原始字节数
+        return int(mem_val / (1024 * 1024))
+    if isinstance(mem_val, str):
+        mem_val = mem_val.strip()
+        # 后缀映射: Ki, Mi, Gi, Ti, Pi, Ei, K, M, G, T, P, E
+        suffixes = {
+            "Ki": 1 / 1024,
+            "Mi": 1,
+            "Gi": 1024,
+            "Ti": 1024 * 1024,
+            "Pi": 1024 * 1024 * 1024,
+            "Ei": 1024 * 1024 * 1024 * 1024,
+            "K": 0.9765625,   # 1000 bytes -> 0.953 MiB
+            "M": 0.953674,     # 1000000 bytes -> 0.953 MiB
+            "G": 953.674,
+            "T": 976562.5,
+            "P": 976562500,
+            "E": 976562500000,
+        }
+        for suffix, multiplier in suffixes.items():
+            if mem_val.endswith(suffix):
+                try:
+                    return int(float(mem_val[:-len(suffix)]) * multiplier)
+                except ValueError:
+                    return None
+        # 无后缀，按字节处理
+        try:
+            return int(float(mem_val) / (1024 * 1024))
+        except ValueError:
+            return None
+    return None
 
 
 LEVEL_Q22_4 = Level(
     id="Q22.4",
     chapter="ch22",
-    title="控制平面故障排查",
+    title="Pending Pod 故障排查",
     description="""
-# 控制平面故障排查 🎛️
+# Pending Pod 故障排查 ⚡
 
-API Server 响应缓慢，怀疑控制平面组件出问题。需要排查控制平面各组件状态。
+一个 Pod 一直处于 `Pending` 状态，无法被调度到任何节点。需要你按照排查流程定位问题并修复。
 
 ## 场景
 
+故障 Pod 的 YAML（有问题）：
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: worker
+spec:
+  containers:
+  - name: worker
+    image: busybox:1.36
+    command: ["sleep", "3600"]
+    resources:
+      requests:
+        cpu: "100"        # ← 100 CPU！没有节点有这么多 CPU
+        memory: "512Gi"   # ← 512Gi 内存！远超任何节点容量
 ```
-$ kubectl get pods -n kube-system
-NAME                                   READY   STATUS             RESTARTS
-kube-apiserver-master                  1/1     Running            0
-etcd-master                            0/1     CrashLoopBackOff   5    # ← 问题！
-kube-controller-manager-master         1/1     Running            0
-kube-scheduler-master                  1/1     Running            0
+
+模拟排查输出：
+```
+$ kubectl get pods
+NAME     READY   STATUS    RESTARTS   AGE
+worker   0/1     Pending   0          5m
+
+$ kubectl describe pod worker
+...
+Events:
+  Warning  FailedScheduling  5m  default-scheduler
+    0/3 nodes are available: 3 Insufficient cpu, 3 Insufficient memory.
+  # ← 没有节点的 CPU/内存能满足请求！
+```
+
+## 排查流程
+
+```
+1. kubectl get pods              -> 确认 Pending 状态
+2. kubectl describe pod worker   -> 查看 Events 中的 FailedScheduling 原因
+3. 定位问题: requests.cpu=100, requests.memory=512Gi 远超节点容量
+4. 修复 YAML: 将 resources.requests 减小到合理值
+5. kubectl apply -f fixed.yaml   -> 重新调度
 ```
 
 ## 任务
 
-编写控制平面故障排查命令，包含：
-- 使用 `kubectl get pods -n kube-system` 检查控制平面 Pod
-- 或使用 `kubectl get componentstatuses` 检查组件健康
-- 检查具体组件（kube-apiserver/etcd/scheduler/controller-manager）
+提交修正后的 Pod YAML：
+- 将 `resources.requests` 减小到合理值（CPU ≤ 64 核，Memory ≤ 256Gi）
+- 保留 `image` 和 `command`
+- 确保 Pod 能被正常调度
 
 ## 提示
 
-排查流程：
-```bash
-# 1. 检查控制平面 Pod
-kubectl get pods -n kube-system
-
-# 2. 检查组件状态
-kubectl get componentstatuses
-
-# 3. 查看出问题组件的日志
-kubectl logs etcd-master -n kube-system
+修复后的 YAML（合理资源请求）：
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: worker
+spec:
+  containers:
+  - name: worker
+    image: busybox:1.36
+    command: ["sleep", "3600"]
+    resources:
+      requests:
+        cpu: "500m"      # ← 0.5 核，合理
+        memory: "512Mi"   # ← 512MB，合理
+      limits:
+        cpu: "1"
+        memory: "1Gi"
 ```
 """,
     starter_yaml="""\
-# 输入控制平面排查命令
-# 1. kubectl get pods -n kube-system
-# 2. kubectl get componentstatuses
-# 3. kubectl logs <component> -n kube-system
+apiVersion: v1
+kind: Pod
+metadata:
+  name: worker
+spec:
+  containers:
+  - name: worker
+    image: busybox:1.36
+    command: ["sleep", "3600"]
+    resources:
+      requests:
+        cpu: "100"        # ← 修复：减小到合理值
+        memory: "512Gi"   # ← 修复：减小到合理值
 """,
-    check_fn=_check_224_control_plane,
+    check_fn=_check_224_pending_fix,
     lesson=Lesson(
         concept="""\
-## 控制平面故障排查
+## Pending Pod 排查
 
-Kubernetes 控制平面包含四个核心组件，任何一个出问题都会影响集群功能。
-
-### 控制平面组件
-
-| 组件 | 作用 | 故障影响 |
-|------|------|----------|
-| **kube-apiserver** | API 入口，所有操作通过它 | 集群不可操作 |
-| **etcd** | 集群状态存储 | 数据丢失风险，API Server 无法工作 |
-| **kube-scheduler** | Pod 调度 | 新 Pod 无法被调度 |
-| **kube-controller-manager** | 控制器循环 | Deployment/ReplicaSet 等无法协调 |
+Pod 处于 `Pending` 状态表示它已被提交到 Kubernetes，但尚未被调度到任何节点。最常见的原因是**调度失败**。
 
 ### 排查步骤
 
 ```
-1. kubectl get pods -n kube-system
-   → 检查控制平面 Pod 状态
+1. kubectl get pods
+   -> 确认 Pod 处于 Pending 状态
 
-2. kubectl get componentstatuses
-   → 检查 etcd/scheduler/controller-manager 健康状态
+2. kubectl describe pod <pod-name>
+   -> 查看 Events 部分:
+      - FailedScheduling: 没有节点满足调度条件
+      - Insufficient cpu: CPU 资源不足
+      - Insufficient memory: 内存资源不足
+      - node(s) didn't match node selector: 亲和性不匹配
+      - node(s) had taints that the pod didn't tolerate: 污点不容忍
 
-3. kubectl logs <component> -n kube-system
-   → 查看出问题组件的日志
+3. 检查资源请求
+   -> kubectl get pod <pod-name> -o jsonpath='{.spec.containers[*].resources}'
+   -> 对比节点可用资源: kubectl describe node | grep -A 5 Allocated
 
-4. kubectl describe pod <component> -n kube-system
-   → 查看 Pod 事件
-
-5. 如果是静态 Pod:
-   → 检查 /etc/kubernetes/manifests/ 下的 YAML
-   → 检查 kubelet 日志: journalctl -u kubelet
+4. 修复并重新部署
+   -> 减小 resources.requests
+   -> 或添加 nodeSelector 指定有足够资源的节点
+   -> 或添加 tolerations 容忍节点污点
 ```
 
-### 静态 Pod
+### Pending 的常见原因
 
-控制平面组件通常以**静态 Pod** 形式运行：
-- YAML 放在 `/etc/kubernetes/manifests/` 目录
-- 由 kubelet 直接管理，不依赖 API Server
-- 修改 YAML 后 kubelet 自动重建 Pod
-- Pod 名称格式: `<component>-<node-name>`
+| 原因 | Events 消息 | 解决方法 |
+|------|------------|----------|
+| **资源不足** | Insufficient cpu/memory | 减小 resources.requests |
+| **nodeSelector 不匹配** | didn't match node selector | 修正 nodeSelector 或添加标签到节点 |
+| **节点污点** | had taints that the pod didn't tolerate | 添加 tolerations 或移除污点 |
+| **亲和性/反亲和性** | node(s) didn't satisfy pod affinity | 修正 affinity 规则 |
+| **资源配额超限** | exceeded quota | 减少资源请求或申请增加配额 |
+| **PVC 未绑定** | pod has unbound immediate PersistentVolumeClaims | 检查 PVC/PV 配置 |
+| **节点 NotReady** | 0/N nodes are available | 修复 NotReady 节点 |
 
-### 常见控制平面故障
+### 资源单位
 
-| 故障 | 原因 | 解决方法 |
-|------|------|----------|
-| etcd CrashLoopBackOff | 磁盘满/数据损坏 | 清理磁盘/恢复快照 |
-| API Server 无法启动 | 证书过期 | 更新证书 |
-| Scheduler 不工作 | 配置错误 | 检查配置文件 |
-| Controller Manager 重启 | 权限问题 | 检查 kubeconfig |
+```
+CPU:
+  1 = 1 核 = 1000m (millicores)
+  500m = 0.5 核
+  100m = 0.1 核
+
+Memory:
+  1 Ki = 1024 bytes
+  1 Mi = 1024 Ki = 1,048,576 bytes
+  1 Gi = 1024 Mi = 1,073,741,824 bytes
+```
 """,
         key_fields=[
-            {"name": "kubectl get pods -n kube-system", "description": "检查控制平面 Pod 状态", "required": True, "example": "kubectl get pods -n kube-system"},
-            {"name": "kubectl get componentstatuses", "description": "检查控制平面组件健康状态", "required": False, "example": "kubectl get cs"},
-            {"name": "kubectl logs", "description": "查看组件日志", "required": True, "example": "kubectl logs etcd-master -n kube-system"},
-            {"name": "/etc/kubernetes/manifests/", "description": "静态 Pod YAML 目录", "required": False, "example": "/etc/kubernetes/manifests/etcd.yaml"},
+            {"name": "resources.requests.cpu", "description": "CPU 请求值，过大导致调度失败", "required": True, "example": "500m (0.5 核)"},
+            {"name": "resources.requests.memory", "description": "内存请求值，过大导致调度失败", "required": True, "example": "512Mi"},
+            {"name": "nodeSelector", "description": "节点选择器，可指定有足够资源的节点", "required": False, "example": "disktype: ssd"},
+            {"name": "tolerations", "description": "污点容忍，允许调度到有污点的节点", "required": False, "example": "key: node-role.kubernetes.io/master"},
         ],
         diagram="""\
-  控制平面排查流程
+  Pending Pod 排查流程
 
-  ┌───────────────────────────────────────────────────────┐
-  │  kubectl get pods -n kube-system                      │
-  │                                                       │
-  │  kube-apiserver-master       1/1     Running    ✅    │
-  │  etcd-master                 0/1     CrashLoop ❌     │
-  │  kube-controller-manager     1/1     Running    ✅    │
-  │  kube-scheduler-master       1/1     Running    ✅    │
-  └─────────────────────────┬─────────────────────────────┘
-                            │
-                            ▼
-  ┌───────────────────────────────────────────────────────┐
-  │  kubectl logs etcd-master -n kube-system              │
-  │                                                       │
-  │  "disk space exhausted"                               │
-  │  "failed to write wal"                                │
-  └─────────────────────────┬─────────────────────────────┘
-                            │
-                            ▼
-  ┌───────────────────────────────────────────────────────┐
-  │  修复 etcd                                             │
-  │  1. 清理磁盘空间 / 压缩 etcd                           │
-  │  2. 或从快照恢复                                       │
-  │  3. etcd Pod 自动重启 (静态 Pod)                       │
-  └─────────────────────────┬─────────────────────────────┘
-                            │
-                            ▼
-  ┌───────────────────────────────────────────────────────┐
-  │  验证                                                  │
-  │  kubectl get cs   →  all healthy                      │
-  │  kubectl get pods -n kube-system  →  all Running ✅   │
-  └───────────────────────────────────────────────────────┘
+  ┌──────────────┐
+  │ kubectl get  │     Pending
+  │ pods         │ ──────────────────────┐
+  └──────┬───────┘                       │
+         ▼                               │
+  ┌──────────────────┐                   │
+  │ kubectl describe │  Events:          │
+  │ pod worker       │  FailedScheduling │
+  │                  │  Insufficient cpu │
+  └──────┬───────────┘  Insufficient mem │
+         │                               │
+         ▼                               │
+  ┌──────────────────┐                   │
+  │ 检查资源请求      │                   │
+  │                  │                   │
+  │ requests.cpu:    │  100 CPU ← 太大!  │
+  │ requests.memory: │  512Gi  ← 太大!  │
+  └──────┬───────────┘                   │
+         │                               │
+         ▼                               │
+  ┌──────────────────┐                   │
+  │ 修复 resources   │                   │
+  │ cpu: 500m        │                   │
+  │ memory: 512Mi    │                   │
+  │ kubectl apply    │                   │
+  └──────┬───────────┘                   │
+         │                               │
+         ▼                               │
+  ┌──────────────────┐                   │
+  │ 验证              │                   │
+  │ kubectl get pods │                   │
+  │ worker: Running  │ ──────────────────┘
+  └──────────────────┘   ✅
 """,
         example_yaml="""\
-# 控制平面排查命令
+# 修复 Pending Pod（资源请求过大）
 
-# 1. 检查控制平面 Pod
-kubectl get pods -n kube-system
+# 问题 YAML（Pending）:
+# resources:
+#   requests:
+#     cpu: "100"
+#     memory: "512Gi"
 
-# 2. 检查组件健康状态
-kubectl get componentstatuses
-
-# 3. 查看故障组件日志
-kubectl logs etcd-master -n kube-system
-
-# 4. 查看静态 Pod 配置
-cat /etc/kubernetes/manifests/etcd.yaml
-
-# 5. 检查 kubelet
-journalctl -u kubelet | grep etcd
-
-# 6. 检查磁盘空间（etcd 常见问题）
-df -h /var/lib/etcd
+# 修复 YAML（合理资源请求）:
+apiVersion: v1
+kind: Pod
+metadata:
+  name: worker
+spec:
+  containers:
+  - name: worker
+    image: busybox:1.36
+    command: ["sleep", "3600"]
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "512Mi"
+      limits:
+        cpu: "1"
+        memory: "1Gi"
 """,
         common_errors=[
-            "忘记检查 kube-system 命名空间的 Pod 状态",
-            "不查看故障组件的日志，盲目操作",
-            "忽略 etcd 磁盘空间问题（最常见的控制平面故障）",
-            "修改静态 Pod YAML 后忘记等待 kubelet 自动重建",
+            "resources.requests 设置过大，超过所有节点的可用资源",
+            "忘记检查 kubectl describe pod 的 Events 部分，看不到 FailedScheduling 原因",
+            "nodeSelector 指定的标签不存在于任何节点",
+            "忽略了节点的 taints，Pod 无法被调度到有污点的节点",
         ],
         tips=[
-            "kubectl get componentstatuses 快速检查核心组件健康",
-            "etcd 故障最常见原因是磁盘满，定期检查磁盘空间",
-            "控制平面证书过期会导致 API Server 无法启动",
-            "用 etcdctl endpoint health 检查 etcd 健康",
+            "kubectl describe pod 的 Events 部分是排查 Pending 的关键",
+            "kubectl describe node | grep -A 10 Allocated 查看节点已分配资源",
+            "requests 不需要等于 limits，通常 requests < limits",
+            "生产环境建议设置 resources.requests 避免过度调度",
         ],
     ),
 )
-
 
 # ==================== Q22.5 集群实战 - 完整故障排查 ====================
 

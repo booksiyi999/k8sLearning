@@ -21,6 +21,13 @@ def check(level_id, yaml_text):
 # Level IDs: Q19.1 .. Q22.5
 LEVELS = [f"Q{ch}.{lv}" for ch in range(19, 23) for lv in range(1, 6)]
 
+# Q22.3 and Q22.4 were rewritten from text-input (command) checkers to
+# YAML-input (Pod fix) checkers.  A valid Pod YAML is now a correct answer
+# for these levels, so they must be excluded from tests that assert a Pod
+# YAML is rejected.
+POD_ACCEPTING = {"Q22.3", "Q22.4"}
+LEVELS_NO_POD = [lv for lv in LEVELS if lv not in POD_ACCEPTING]
+
 
 # ── Crash / no-500 tests ──────────────────────────────────────────────
 
@@ -88,7 +95,7 @@ class TestCh19Ch22Crash:
 # ── Wrong kind tests ──────────────────────────────────────────────────
 
 class TestCh19Ch22WrongKind:
-    @pytest.mark.parametrize("level_id", LEVELS)
+    @pytest.mark.parametrize("level_id", LEVELS_NO_POD)
     def test_wrong_kind_pod(self, level_id):
         yaml = "apiVersion: v1\nkind: Pod\nmetadata:\n  name: wrong\nspec:\n  containers:\n  - name: x\n    image: nginx\n"
         d = check(level_id, yaml)
@@ -234,7 +241,7 @@ class TestCh19Ch22StatePollution:
 # ── Injection / special characters ────────────────────────────────────
 
 class TestCh19Ch22Injection:
-    @pytest.mark.parametrize("level_id", LEVELS)
+    @pytest.mark.parametrize("level_id", LEVELS_NO_POD)
     def test_sql_injection_in_name(self, level_id):
         yaml = (
             "apiVersion: v1\n"
@@ -245,7 +252,7 @@ class TestCh19Ch22Injection:
         d = check(level_id, yaml)
         assert d["ok"] is False
 
-    @pytest.mark.parametrize("level_id", LEVELS)
+    @pytest.mark.parametrize("level_id", LEVELS_NO_POD)
     def test_path_traversal_in_name(self, level_id):
         yaml = (
             "apiVersion: v1\n"
@@ -267,7 +274,7 @@ class TestCh19Ch22Injection:
         d = check(level_id, yaml)
         assert d["ok"] is False
 
-    @pytest.mark.parametrize("level_id", LEVELS)
+    @pytest.mark.parametrize("level_id", LEVELS_NO_POD)
     def test_null_bytes_in_name(self, level_id):
         yaml = (
             "apiVersion: v1\n"

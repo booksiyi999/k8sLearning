@@ -81,7 +81,14 @@ spec:
 # ==================== Q27.1 Istio 架构概念 ====================
 
 def _check_271_istio_arch(user_yaml: str) -> CheckResult:
-    """Q27.1 创建 Istio 控制面 Deployment"""
+    """Q27.1 Istio 服务网格部署 - 验证 sidecar 注入或 Istio CRD
+
+    不再检查 Deployment 名称是否含 'istio' 字符串。
+    检查以下任一条件满足:
+    1. Namespace 含 istio-injection=enabled 标签 + Deployment（sidecar 自动注入）
+    2. VirtualService 资源（apiVersion: networking.istio.io/v1beta1 或 v1）
+    3. Gateway 资源（apiVersion: networking.istio.io/v1beta1 或 v1）
+    """
     try:
         docs = _parse_yaml_docs(user_yaml)
     except yaml.YAMLError as e:
@@ -91,88 +98,195 @@ def _check_271_istio_arch(user_yaml: str) -> CheckResult:
         return CheckResult(
             ok=False,
             error="YAML 为空或格式错误",
-            hints=["你需要编写一个 kind: Deployment 的 YAML"],
+            hints=["你需要编写 Istio Service Mesh 相关的 YAML"],
         )
 
-    deploy_doc = None
-    ns_doc = None
+    # 收集各类资源
+    namespaces = []
+    deployments = []
+    virtualservices = []
+    gateways = []
+
     for doc in docs:
         if not isinstance(doc, dict):
             continue
         kind = doc.get("kind", "")
-        if kind == "Deployment" and deploy_doc is None:
-            deploy_doc = doc
-        elif kind == "Namespace" and ns_doc is None:
-            ns_doc = doc
+        if kind == "Namespace":
+            namespaces.append(doc)
+        elif kind == "Deployment":
+            deployments.append(doc)
+        elif kind == "VirtualService":
+            virtualservices.append(doc)
+        elif kind == "Gateway":
+            # 注意: 只收集 Istio Gateway，不收集普通 Kubernetes Ingress
+            api_version = doc.get("apiVersion", "")
+            if "istio.io" in api_version:
+                gateways.append(doc)
 
-    if not deploy_doc:
+    # ── 路径 A: Namespace 含 istio-injection=enabled 标签 + Deployment ──
+    injection_ns = None
+    for ns_doc in namespaces:
+        ns_meta = ns_doc.get("metadata", {})
+        if not isinstance(ns_meta, dict):
+            continue
+        ns_name = ns_meta.get("name", "")
+        labels = ns_meta.get("labels", {})
+        if not isinstance(labels, dict):
+            continue
+        if labels.get("istio-injection") == "enabled":
+            injection_ns = ns_name
+            break
+
+    if injection_ns:
+        # 检查是否有 Deployment 在该 namespace 中
+        if not deployments:
+            return CheckResult(
+                ok=False,
+                error="已创建带 istio-injection=enabled 标签的 Namespace，但没有 Deployment",
+                hints=["在该 Namespace 中创建一个 Deployment，Istio 会自动注入 sidecar"],
+            )
+
+        # 找到在该 namespace 中的 Deployment
+        deploy_in_ns = None
+        for dep in deployments:
+            dep_meta = dep.get("metadata", {})
+            if not isinstance(dep_meta, dict):
+                continue
+            dep_ns = dep_meta.get("namespace", "default")
+            if dep_ns == injection_ns:
+                deploy_in_ns = dep
+                break
+
+        if not deploy_in_ns:
+            return CheckResult(
+                ok=False,
+                error=f"Namespace '{injection_ns}' 有注入标签，但没有 Deployment 部署在该 Namespace 中",
+                hints=[f"在 Deployment 的 metadata.namespace 中指定 '{injection_ns}'"],
+            )
+
+        # 验证 Deployment 结构
+        spec = deploy_in_ns.get("spec", {})
+        if not isinstance(spec, dict):
+            return CheckResult(ok=False, error="Deployment 缺少 spec", hints=[])
+
+        template = spec.get("template", {})
+        if not isinstance(template, dict):
+            return CheckResult(ok=False, error="Deployment 缺少 spec.template", hints=[])
+
+        pod_spec = template.get("spec", {})
+        if not isinstance(pod_spec, dict):
+            return CheckResult(ok=False, error="Deployment 缺少 spec.template.spec", hints=[])
+
+        containers = pod_spec.get("containers", [])
+        if not isinstance(containers, list) or not containers:
+            return CheckResult(
+                ok=False,
+                error="Deployment 缺少 containers",
+                hints=["添加 containers 列表"],
+            )
+
+        c = containers[0]
+        if not isinstance(c, dict):
+            return CheckResult(ok=False, error="containers[0] 格式错误", hints=[])
+
+        if not c.get("image"):
+            return CheckResult(
+                ok=False,
+                error="容器缺少 image",
+                hints=["指定应用镜像，如 nginx:1.25"],
+            )
+
         return CheckResult(
-            ok=False,
-            error="没有找到 Deployment",
-            hints=["你需要创建一个 kind: Deployment 的 YAML 🌐"],
+            ok=True, state=None,
+            hints=[
+                f"Namespace '{injection_ns}' 已启用 istio-injection=enabled，Istio 会自动为 Pod 注入 Envoy sidecar 🌐",
+                "Sidecar 注入是 Istio 数据面的核心机制",
+            ],
         )
 
-    metadata = deploy_doc.get("metadata", {})
-    if not isinstance(metadata, dict):
-        return CheckResult(ok=False, error="Deployment 缺少 metadata", hints=[])
+    # ── 路径 B: VirtualService 资源 ──
+    if virtualservices:
+        vs = virtualservices[0]
+        api_version = vs.get("apiVersion", "")
 
-    # 检查是否在 istio-system namespace
-    ns = metadata.get("namespace", "")
-    name = metadata.get("name", "").lower()
+        # 验证 apiVersion 是 Istio networking
+        if "istio.io" not in api_version:
+            return CheckResult(
+                ok=False,
+                error=f"VirtualService 的 apiVersion 应为 networking.istio.io/v1beta1，实际为 '{api_version}'",
+                hints=["使用 apiVersion: networking.istio.io/v1beta1"],
+            )
 
-    # 检查是否是 Istio 控制面组件
-    istio_keywords = ["istiod", "istio", "pilot", "citadel", "galley"]
-    is_istio = any(kw in name for kw in istio_keywords)
+        # 验证 spec 结构
+        vs_spec = vs.get("spec", {})
+        if not isinstance(vs_spec, dict):
+            return CheckResult(ok=False, error="VirtualService 缺少 spec", hints=[])
 
-    if not is_istio and "istio" not in ns.lower():
+        hosts = vs_spec.get("hosts")
+        if not isinstance(hosts, list) or not hosts:
+            return CheckResult(
+                ok=False,
+                error="VirtualService 缺少 spec.hosts",
+                hints=["添加 spec.hosts 指定目标服务，如 ['my-service']"],
+            )
+
+        http = vs_spec.get("http")
+        if not isinstance(http, list) or not http:
+            return CheckResult(
+                ok=False,
+                error="VirtualService 缺少 spec.http（HTTP 路由规则）",
+                hints=["添加 spec.http 路由规则，定义流量如何分发"],
+            )
+
         return CheckResult(
-            ok=False,
-            error="Deployment 名称或命名空间应与 Istio 相关（如 istiod, namespace: istio-system）",
-            hints=["Istio 控制面组件通常部署在 istio-system 命名空间"],
+            ok=True, state=None,
+            hints=[
+                "VirtualService 定义了 Istio 流量路由规则，apiVersion: networking.istio.io/v1beta1 🛤️",
+                "VirtualService 是 Istio Service Mesh 的核心 CRD",
+            ],
         )
 
-    spec = deploy_doc.get("spec", {})
-    if not isinstance(spec, dict):
-        return CheckResult(ok=False, error="Deployment 缺少 spec", hints=[])
+    # ── 路径 C: Gateway 资源 ──
+    if gateways:
+        gw = gateways[0]
+        api_version = gw.get("apiVersion", "")
 
-    template = spec.get("template", {})
-    if not isinstance(template, dict):
-        return CheckResult(ok=False, error="Deployment 缺少 spec.template", hints=[])
+        if "istio.io" not in api_version:
+            return CheckResult(
+                ok=False,
+                error=f"Gateway 的 apiVersion 应为 networking.istio.io/v1beta1，实际为 '{api_version}'",
+                hints=["使用 apiVersion: networking.istio.io/v1beta1"],
+            )
 
-    pod_spec = template.get("spec", {})
-    if not isinstance(pod_spec, dict):
-        return CheckResult(ok=False, error="Deployment 缺少 spec.template.spec", hints=[])
+        gw_spec = gw.get("spec", {})
+        if not isinstance(gw_spec, dict):
+            return CheckResult(ok=False, error="Gateway 缺少 spec", hints=[])
 
-    containers = pod_spec.get("containers", [])
-    if not isinstance(containers, list) or not containers:
+        servers = gw_spec.get("servers")
+        if not isinstance(servers, list) or not servers:
+            return CheckResult(
+                ok=False,
+                error="Gateway 缺少 spec.servers",
+                hints=["添加 spec.servers 配置端口和协议"],
+            )
+
         return CheckResult(
-            ok=False,
-            error="Deployment 缺少 containers",
-            hints=["添加 containers 列表"],
+            ok=True, state=None,
+            hints=[
+                "Gateway 定义了 Istio 入口网关，apiVersion: networking.istio.io/v1beta1 🚪",
+                "Gateway + VirtualService 是 Istio 流量入口的标准配置",
+            ],
         )
 
-    c = containers[0]
-    if not isinstance(c, dict):
-        return CheckResult(ok=False, error="containers[0] 格式错误", hints=[])
-
-    if not c.get("image"):
-        return CheckResult(
-            ok=False,
-            error="容器缺少 image",
-            hints=["指定 Istio 控制面镜像，如 istio/pilot:1.21.0"],
-        )
-
-    # 检查是否在 istio-system namespace 或创建了这个 namespace
-    if "istio" not in ns.lower() and not ns_doc:
-        return CheckResult(
-            ok=False,
-            error="Istio 控制面应部署在 istio-system 命名空间",
-            hints=["设置 metadata.namespace: istio-system 或创建 istio-system Namespace"],
-        )
-
+    # ── 没有匹配任何路径 ──
     return CheckResult(
-        ok=True, state=None,
-        hints=["Istio 控制面 (istiod) 管理所有数据面 Envoy 代理的配置 🌐"],
+        ok=False,
+        error="未找到有效的 Istio Service Mesh 配置",
+        hints=[
+            "方式 1: 创建 Namespace（含 istio-injection=enabled 标签）+ Deployment（启用 sidecar 自动注入）",
+            "方式 2: 创建 VirtualService（apiVersion: networking.istio.io/v1beta1）定义路由规则",
+            "方式 3: 创建 Gateway（apiVersion: networking.istio.io/v1beta1）配置入口网关",
+        ],
     )
 
 
@@ -187,65 +301,110 @@ LEVEL_Q27_1 = Level(
 
 ## 任务
 
-创建 Istio 控制面 Deployment：
-- `kind: Deployment`，名称 `istiod`
-- `metadata.namespace: istio-system`
-- 容器镜像 `istio/pilot:1.21.0`
-- 同时创建 `istio-system` Namespace
+选择以下**任一方式**部署 Istio Service Mesh 配置：
 
-## 提示
+### 方式 1: Sidecar 自动注入（推荐）
+
+创建一个带 `istio-injection=enabled` 标签的 Namespace，然后在该 Namespace 中创建 Deployment：
 
 ```yaml
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: istio-system
+  name: my-istio-app
+  labels:
+    istio-injection: enabled    # ← 启用 sidecar 自动注入
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: istiod
-  namespace: istio-system
+  name: my-app
+  namespace: my-istio-app       # ← 部署在带注入标签的 Namespace 中
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
-      app: istiod
+      app: my-app
   template:
     metadata:
       labels:
-        app: istiod
+        app: my-app
     spec:
       containers:
-      - name: istiod
-        image: istio/pilot:1.21.0
+      - name: my-app
+        image: nginx:1.25
+```
+
+### 方式 2: VirtualService 路由规则
+
+```yaml
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: my-app-vs
+spec:
+  hosts:
+  - my-app
+  http:
+  - route:
+    - destination:
+        host: my-app
+        subset: v1
+      weight: 80
+    - destination:
+        host: my-app
+        subset: v2
+      weight: 20
+```
+
+### 方式 3: Gateway 入口网关
+
+```yaml
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: my-gateway
+spec:
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "*"
 ```
 """,
     starter_yaml="""\
+# 选择一种方式部署 Istio Service Mesh 配置
+
+# 方式 1: Namespace + Deployment（sidecar 自动注入）
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: istio-system
+  name: my-istio-app
+  labels:
+    istio-injection: enabled   # ← 启用 sidecar 注入
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: istiod
-  # 添加 namespace: istio-system
+  name: my-app
+  namespace: my-istio-app      # ← 部署在该 Namespace 中
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
-      app: istiod
+      app: my-app
   template:
     metadata:
       labels:
-        app: istiod
+        app: my-app
     spec:
       containers:
-      # 添加 istiod 容器
+      - name: my-app
+        image: nginx:1.25
 """,
     check_fn=_check_271_istio_arch,
     lesson=Lesson(
@@ -278,26 +437,82 @@ spec:
   └─────┘     └─────┘     └─────┘
 ```
 
-### 控制面组件 (istiod)
+### Sidecar 注入原理
 
-- **Pilot**：将路由规则（VirtualService/DestinationRule）转换为 Envoy 配置
-- **Citadel**：管理 mTLS 证书的签发和轮转
-- **Galley**：验证 Istio 配置的合法性
+Istio 通过**注入 Envoy sidecar 容器**到每个 Pod 中来实现数据面功能。
 
-### 数据面 (Envoy Sidecar)
+#### 自动注入（推荐）
 
-- 以 Sidecar 方式注入到每个 Pod
-- 拦截所有进出 Pod 的网络流量
-- 执行路由、负载均衡、mTLS、熔断、重试等策略
+给 Namespace 添加 `istio-injection=enabled` 标签后，该 Namespace 中新建的 Pod 会**自动**被注入 Envoy sidecar：
 
-### Sidecar 注入方式
+```bash
+# 启用 sidecar 自动注入
+kubectl label namespace my-istio-app istio-injection=enabled
 
-1. **自动注入**：给 Namespace 打标签 `istio-injection=enabled`
-2. **手动注入**：`istioctl kube-inject -f deployment.yaml`
+# 之后创建的 Pod 会自动包含 Envoy sidecar 容器
+kubectl apply -f deployment.yaml -n my-istio-app
+```
+
+注入后，每个 Pod 会包含 2 个容器：
+- **应用容器**（用户定义的）
+- **istio-proxy 容器**（Envoy sidecar，由 Istio 自动注入）
+
+#### 手动注入
+
+```bash
+istioctl kube-inject -f deployment.yaml | kubectl apply -f -
+```
+
+### VirtualService 路由规则
+
+VirtualService 定义了流量如何路由到服务：
+
+```yaml
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: reviews-vs
+spec:
+  hosts:
+  - reviews
+  http:
+  - match:
+    - uri:
+        prefix: /api/v1
+    route:
+    - destination:
+        host: reviews
+        subset: v1
+  - route:
+    - destination:
+        host: reviews
+        subset: v2
+```
+
+### Gateway 入口网关
+
+Gateway 配置了网格的入口流量：
+
+```yaml
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: ingress-gateway
+spec:
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "*"
+```
 """,
         key_fields=[
-            {"name": "metadata.namespace", "description": "Istio 控制面部署在 istio-system 命名空间", "required": True, "example": "istio-system"},
-            {"name": "spec.containers[].image", "description": "istiod 镜像", "required": True, "example": "istio/pilot:1.21.0"},
+            {"name": "istio-injection", "description": "Namespace 标签，值为 enabled 时启用 sidecar 自动注入", "required": False, "example": "istio-injection: enabled"},
+            {"name": "apiVersion", "description": "Istio CRD 的 API 版本", "required": False, "example": "networking.istio.io/v1beta1"},
+            {"name": "spec.hosts", "description": "VirtualService 的目标服务列表", "required": False, "example": "['reviews']"},
+            {"name": "spec.servers", "description": "Gateway 的端口和协议配置", "required": False, "example": "port: 80, protocol: HTTP"},
         ],
         diagram="""\
   Istio Service Mesh 架构
@@ -320,47 +535,84 @@ spec:
      │  (Pod)        (Pod)        (Pod)   │
      └────────────────────────────────────┘
 
-  流量路径: App A → Envoy A → (mTLS) → Envoy B → App B
+  Sidecar 注入方式:
+  ┌─────────────────────────────────────────────────┐
+  │  Namespace: my-istio-app                        │
+  │  labels:                                        │
+  │    istio-injection: enabled  ← 启用自动注入     │
+  │                                                 │
+  │  Pod (自动注入后):                               │
+  │  ┌─────────────────────────────────┐            │
+  │  │ Container 1: my-app (应用)      │            │
+  │  │ Container 2: istio-proxy (Envoy)│ ← 自动注入 │
+  │  └─────────────────────────────────┘            │
+  └─────────────────────────────────────────────────┘
+
+  流量路径: App A -> Envoy A -> (mTLS) -> Envoy B -> App B
 """,
         example_yaml="""\
----                                    # 多文档分隔
+# 方式 1: Sidecar 自动注入（推荐）
+---
 apiVersion: v1                         # Namespace API
 kind: Namespace                        # 资源类型
-metadata:                              # 元数据
-  name: istio-system                   # Istio 专用命名空间
----                                    # 多文档分隔
+metadata:
+  name: my-istio-app                   # Istio 应用命名空间
+  labels:
+    istio-injection: enabled           # ← 启用 sidecar 自动注入
+---
 apiVersion: apps/v1                    # Deployment API
 kind: Deployment                       # 资源类型
-metadata:                              # 元数据
-  name: istiod                         # 控制面组件名
-  namespace: istio-system              # 部署在 istio-system
-spec:                                  # 规格
-  replicas: 1                          # 1 个副本
-  selector:                            # 标签选择器
+metadata:
+  name: my-app                         # 应用名称
+  namespace: my-istio-app              # 部署在带注入标签的 Namespace 中
+spec:
+  replicas: 2                          # 2 个副本
+  selector:
     matchLabels:
-      app: istiod
-  template:                            # Pod 模板
+      app: my-app
+  template:
     metadata:
       labels:
-        app: istiod
-    spec:                              # Pod 规格
-      containers:                      # 容器列表
-      - name: istiod                   # 容器名
-        image: istio/pilot:1.21.0      # Pilot 镜像
+        app: my-app
+    spec:
+      containers:
+      - name: my-app                   # 应用容器
+        image: nginx:1.25              # 镜像
+        # Istio 会自动注入 istio-proxy (Envoy) sidecar 容器
+
+# 方式 2: VirtualService 路由规则
+# apiVersion: networking.istio.io/v1beta1
+# kind: VirtualService
+# metadata:
+#   name: my-app-vs
+# spec:
+#   hosts:
+#   - my-app
+#   http:
+#   - route:
+#     - destination:
+#         host: my-app
+#         subset: v1
+#       weight: 80
+#     - destination:
+#         host: my-app
+#         subset: v2
+#       weight: 20
 """,
         common_errors=[
-            "把 istiod 部署在 default 命名空间（应部署在 istio-system）",
-            "忘记创建 istio-system Namespace",
-            "把控制面和数据面混淆（istiod 是控制面，Envoy 是数据面）",
+            "Deployment 名称含 'istio' 但没有实际配置 sidecar 注入或 Istio CRD",
+            "创建了 Namespace 但忘记添加 istio-injection=enabled 标签",
+            "Deployment 不在带注入标签的 Namespace 中",
+            "VirtualService 的 apiVersion 写错（应为 networking.istio.io/v1beta1）",
         ],
         tips=[
-            "Istio 1.5+ 将 Pilot/Citadel/Galley 合并为单一组件 istiod",
-            "用 kubectl get pods -n istio-system 查看控制面状态",
-            "Sidecar 自动注入: kubectl label namespace default istio-injection=enabled",
+            "Sidecar 自动注入: kubectl label namespace <ns> istio-injection=enabled",
+            "用 kubectl get pods -n <ns> 查看是否有 2/2 容器（应用 + istio-proxy）",
+            "VirtualService apiVersion: networking.istio.io/v1beta1",
+            "Gateway + VirtualService 配合使用，定义网格入口和路由规则",
         ],
     ),
 )
-
 
 # ==================== Q27.2 VirtualService ====================
 
