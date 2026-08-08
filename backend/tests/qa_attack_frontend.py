@@ -128,12 +128,14 @@ class TestBoundaryReport:
         assert r.status_code == 200
 
     def test_report_huge_xp(self):
-        """total_xp 为超大数。"""
+        """total_xp 为超大数 — 服务端应重算忽略虚假XP。"""
         r = client.post("/api/report", json={"total_xp": 999999999})
         assert r.status_code == 200
         data = r.json()
-        # 应该是满级
-        assert "传奇" in data["rank"] or data["next_rank"] is None
+        # 服务端重算：无完成关卡 -> XP=0，不是满级
+        assert data["total_xp"] == 0
+        assert "传奇" not in data["rank"]
+        assert "warning" in data  # 应有XP不一致警告
 
     def test_report_nonexistent_levels(self):
         """completed_levels 包含不存在的关卡ID。"""
@@ -226,16 +228,17 @@ class TestStateTampering:
     """攻击 /api/report 传入矛盾数据。"""
 
     def test_completed_but_zero_xp(self):
-        """声称完成关卡但 total_xp=0（不一致）。"""
+        """声称完成关卡但 total_xp=0 — 服务端应重算为实际XP。"""
         r = client.post("/api/report", json={
             "completed_levels": ["Q1.1", "Q1.2", "Q1.3", "Q1.4"],
             "total_xp": 0
         })
         assert r.status_code == 200
         data = r.json()
-        # API 应该能处理这种不一致（用 completed_levels 计算完成率，用 total_xp 计算称号）
+        # 服务端重算：4关 × 10 XP = 40
         assert data["completion_rate"] > 0
-        assert data["total_xp"] == 0  # 原样返回
+        assert data["total_xp"] == 40  # 服务端重算
+        assert "warning" in data  # 应有XP不一致警告
 
     def test_first_try_but_high_attempts(self):
         """声称首通但尝试次数>1（矛盾数据）。"""

@@ -2,13 +2,32 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
+from dataclasses import fields as dataclass_fields
 import logging
 import os
 import traceback
 from pydantic import BaseModel
 from app.validator import get_level, list_levels, CheckResult, Lesson
-from app.metadata import get_all_meta, KNOWLEDGE_POINTS, LEVEL_XP, get_rank, get_next_rank, KNOWLEDGE_DOMAINS, CHAPTERS_META
+from app.simulator import ClusterState
+from app.metadata import get_all_meta, KNOWLEDGE_POINTS, LEVEL_XP, CHAPTER_BONUS_XP, get_rank, get_next_rank, KNOWLEDGE_DOMAINS, CHAPTERS_META
 from app.cluster import ClusterManager
+
+
+def _build_cluster_state(state: ClusterState | None) -> dict | None:
+    """动态构建 cluster_state: 遍历 ClusterState 的所有字段, 只返回非空 dict 字段。
+
+    替代之前硬编码 pods/deployments/services 三种资源的做法,
+    确保 ConfigMap/Secret/PV/Ingress/NetworkPolicy/CRD 等 28 种资源
+    都能被前端看到。
+    """
+    if state is None:
+        return None
+    result: dict = {}
+    for f in dataclass_fields(state):
+        value = getattr(state, f.name)
+        if isinstance(value, dict) and value:
+            result[f.name] = value
+    return result if result else None
 
 logger = logging.getLogger(__name__)
 
@@ -98,13 +117,7 @@ async def api_check(req: CheckRequest):
         if not lv:
             return CheckResponse(ok=False, error=f"找不到关卡 {req.level_id}")
         result = lv.check_fn(req.user_yaml)
-        state_dict = None
-        if result.state:
-            state_dict = {
-                "pods": result.state.pods,
-                "deployments": result.state.deployments,
-                "services": result.state.services,
-            }
+        state_dict = _build_cluster_state(result.state)
         return CheckResponse(
             ok=result.ok,
             error=result.error,
@@ -150,6 +163,16 @@ async def api_generate_report(req: ReportRequest):
     """生成结业报告：知识掌握度、薄弱项、成绩评定。"""
     completed = set(req.completed_levels)
     total_levels = len(KNOWLEDGE_POINTS)
+
+    # ── 服务端重新计算 total_xp（安全：不信任客户端提交的值）──
+    client_xp = req.total_xp
+    server_xp = sum(LEVEL_XP.get(lid, 10) for lid in completed)
+    # 章节通关奖励：检查每章是否全部完成
+    for ch_id in CHAPTERS_META:
+        ch_num = int(ch_id[2:])
+        ch_levels = [lid for lid in KNOWLEDGE_POINTS if lid.startswith(f"Q{ch_num}.")]
+        if ch_levels and all(lid in completed for lid in ch_levels):
+            server_xp += CHAPTER_BONUS_XP.get(ch_id, 0)
 
     # 1. 总体完成率
     completion_rate = len(completed) / total_levels if total_levels > 0 else 0
@@ -227,9 +250,9 @@ async def api_generate_report(req: ReportRequest):
         elif stats["rate"] < 1.0:
             recommendations.append(f"「{domain}」即将通关 ({stats['completed']}/{stats['total']})，再完成 {stats['total'] - stats['completed']} 关即可")
 
-    # 7. 称号
-    rank = get_rank(req.total_xp)
-    next_rank, xp_needed = get_next_rank(req.total_xp)
+    # 7. 称号（基于服务端计算的 XP）
+    rank = get_rank(server_xp)
+    next_rank, xp_needed = get_next_rank(server_xp)
 
     # 8. 章节完成情况
     chapter_stats = {}
@@ -245,13 +268,14 @@ async def api_generate_report(req: ReportRequest):
             "rate": len(ch_completed) / len(ch_levels) if ch_levels else 0,
         }
 
-    return {
+    result = {
         "grade": grade,
         "grade_comment": grade_comment,
         "completion_rate": completion_rate,
         "completed_count": len(completed),
         "total_levels": total_levels,
-        "total_xp": req.total_xp,
+        "total_xp": server_xp,
+        "server_calculated_xp": server_xp,
         "rank": rank,
         "next_rank": next_rank,
         "xp_to_next_rank": xp_needed,
@@ -264,6 +288,11 @@ async def api_generate_report(req: ReportRequest):
         "strengths": strengths,
         "recommendations": recommendations,
     }
+    if client_xp != server_xp:
+        result["warning"] = (
+            f"客户端提交的 total_xp({client_xp})与服务端计算值({server_xp})不一致，已使用服务端计算值"
+        )
+    return result
 
 # ═══ v0.4 新增: 教学 + 集群 API ═══
 
@@ -317,13 +346,7 @@ async def api_deploy(req: DeployRequest):
     # 模拟器模式（保持现有逻辑）
     try:
         result = lv.check_fn(req.user_yaml)
-        state_dict = None
-        if result.state:
-            state_dict = {
-                "pods": result.state.pods,
-                "deployments": result.state.deployments,
-                "services": result.state.services,
-            }
+        state_dict = _build_cluster_state(result.state)
         return {
             "ok": result.ok,
             "mode": "simulator",

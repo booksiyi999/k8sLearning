@@ -317,48 +317,60 @@ class TestReportAttempts:
 
 
 class TestReportXP:
-    """XP 计算验证"""
+    """XP 计算验证（服务端重新计算，不信任客户端 total_xp）"""
 
-    def test_total_xp_echoed(self):
+    def test_total_xp_server_calculated(self):
+        """total_xp 由服务端重新计算，不信任客户端提交的值"""
         r = client.post("/api/report", json={
             "completed_levels": [],
-            "total_xp": 2900,
+            "total_xp": 2900,  # 客户端提交虚假值
         })
         data = r.json()
-        assert data["total_xp"] == 2900
+        assert data["total_xp"] == 0  # 服务端计算: 0 关完成 = 0 XP
+        assert data["server_calculated_xp"] == 0
+        assert "warning" in data  # 客户端值与服务端不一致
 
     def test_rank_pod_apprentice_at_40_xp(self):
+        """4 关 * 10 = 40 XP（无完整章节，无奖励）-> Pod 学徒"""
         r = client.post("/api/report", json={
-            "completed_levels": [],
+            "completed_levels": ["Q1.1", "Q1.2", "Q1.3", "Q1.4"],
             "total_xp": 40,
         })
         data = r.json()
+        assert data["total_xp"] == 40
         assert "Pod 学徒" in data["rank"]
 
     def test_rank_deployment_walker_at_100(self):
+        """完整 ch03: 5*10 + 50 = 100 XP -> Deployment 行者"""
         r = client.post("/api/report", json={
-            "completed_levels": [],
+            "completed_levels": CH_LEVELS[3],
             "total_xp": 100,
         })
         data = r.json()
+        assert data["total_xp"] == 100
         assert "Deployment 行者" in data["rank"]
 
     def test_rank_legend_at_500(self):
+        """完整 ch00-ch04: (3+7+5+5+5)*10 + 5*50 = 250+250 = 500 XP -> K8s 传奇"""
+        completed = CH_LEVELS[0] + CH_LEVELS[1] + CH_LEVELS[2] + CH_LEVELS[3] + CH_LEVELS[4]
         r = client.post("/api/report", json={
-            "completed_levels": [],
+            "completed_levels": completed,
             "total_xp": 500,
         })
         data = r.json()
+        assert data["total_xp"] == 500
         assert "K8s 传奇" in data["rank"]
         assert data["next_rank"] is None
+        assert data["xp_to_next_rank"] == 0
 
     def test_next_rank_xp_needed(self):
+        """3 关 * 10 = 30 XP, next rank at 40 -> need 10 more"""
         r = client.post("/api/report", json={
-            "completed_levels": [],
+            "completed_levels": ["Q1.1", "Q1.2", "Q1.3"],
             "total_xp": 30,
         })
         data = r.json()
-        # 30 XP, next rank at 40 -> need 10 more
+        assert data["total_xp"] == 30
         assert data["xp_to_next_rank"] == 10
 
     def test_time_spent_summed(self):
@@ -369,6 +381,46 @@ class TestReportXP:
         })
         data = r.json()
         assert data["total_time_spent"] == 180
+
+
+class TestReportServerXP:
+    """服务端 XP 重新计算验证（安全修复：不信任客户端 total_xp）"""
+
+    def test_report_uses_server_xp(self):
+        """提交正确的 total_xp -> 响应中 total_xp = 服务端计算值"""
+        completed = ["Q1.1", "Q1.2"]  # 2 * 10 = 20 XP, 无完整章节
+        r = client.post("/api/report", json={
+            "completed_levels": completed,
+            "total_xp": 20,
+        })
+        data = r.json()
+        assert data["total_xp"] == 20
+        assert data["server_calculated_xp"] == 20
+        assert "warning" not in data
+
+    def test_report_ignores_fake_xp(self):
+        """提交 total_xp=99999 但只完成1关 -> 响应中 total_xp = 实际XP(10)"""
+        r = client.post("/api/report", json={
+            "completed_levels": ["Q1.1"],
+            "total_xp": 99999,
+        })
+        data = r.json()
+        assert data["total_xp"] == 10
+        assert data["server_calculated_xp"] == 10
+        assert "warning" in data
+
+    def test_report_chapter_bonus(self):
+        """完成整章 -> total_xp 包含章节奖励"""
+        # CH_LEVELS[3] = Q3.1-Q3.5, 5 关 * 10 + 50 章节奖励 = 100
+        r = client.post("/api/report", json={
+            "completed_levels": CH_LEVELS[3],
+            "total_xp": 100,
+        })
+        data = r.json()
+        assert data["total_xp"] == 100
+        assert data["server_calculated_xp"] == 100
+        # 验证章节奖励已包含: 5*10=50 无奖励, 5*10+50=100 有奖励
+        assert data["total_xp"] == 100
 
 
 class TestReportDomainMastery:
