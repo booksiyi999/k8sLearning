@@ -116,6 +116,9 @@ class TestKubectlCommandValidation:
     def test_logs_is_not_dangerous(self):
         assert "logs" not in ClusterManager.DANGEROUS_SUBCOMMANDS
 
+    def test_exec_is_dangerous(self):
+        assert "exec" in ClusterManager.DANGEROUS_SUBCOMMANDS
+
 
 # ═══ API 端点测试 ═══
 

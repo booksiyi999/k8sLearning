@@ -24,14 +24,14 @@ if [ "$MODE" = "--docker" ]; then
     fi
 
     echo "📦 构建 Docker 镜像..."
-    docker build -t k8s-quest:0.3 .
+    docker build -t k8s-quest:v2 .
 
     # 停止旧容器（如果有）
     docker rm -f k8s-quest 2>/dev/null || true
 
     echo "🚀 启动容器..."
     docker run -d --name k8s-quest --restart unless-stopped \
-        -p 8000:8000 k8s-quest:0.3
+        -p 8000:8000 k8s-quest:v2
 
     echo "⏳ 等待服务启动..."
     sleep 3

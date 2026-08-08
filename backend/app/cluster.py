@@ -382,7 +382,7 @@ class ClusterManager:
     # 危险子命令（需要前端确认）
     DANGEROUS_SUBCOMMANDS = frozenset({
         "delete", "drain", "cordon", "uncordon", "taint",
-        "scale", "rollout", "edit",
+        "scale", "rollout", "edit", "exec",
     })
 
     # 禁止的子命令（集群级破坏性操作）

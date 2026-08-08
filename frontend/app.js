@@ -302,7 +302,7 @@ function quest() {
       { id: 'first_blood', icon: '⭐', name: '一击必杀', desc: '某关一次通过', check: (s) => s.progress.level_first_try.length > 0 },
       { id: 'persistent', icon: '💪', name: '百折不挠', desc: '某关尝试 3 次以上才通过', check: (s) => Object.entries(s.progress.level_attempts).some(([k,v]) => v >= 3 && s.progress.completed_levels.includes(k)) },
       { id: 'combo_master', icon: '⚡', name: '连击大师', desc: '连击达到 5', check: (s) => s.progress.max_streak >= 5 },
-      { id: 'legend', icon: '👑', name: 'K8s 传奇', desc: '全部 24 关通关', check: (s) => s.progress.completed_levels.length >= 24 },
+      { id: 'legend', icon: '👑', name: 'K8s 传奇', desc: '全部关卡通关', check: (s) => s.progress.completed_levels.length >= s.levels.length },
     ],
 
     get allBadges() { return this.badgeDefs; },
@@ -439,7 +439,7 @@ h1{color:#ff6b9d}table{width:100%;border-collapse:collapse;margin:16px 0}td,th{p
         completed_levels: [], level_attempts: {},
         level_first_try: [], level_time_spent: {}, badges: [],
       };
-      for (let i = 1; i <= 6; i++) localStorage.removeItem(`bonus_ch0${i}`);
+      for (let i = 0; i <= 28; i++) localStorage.removeItem(`bonus_ch${i.toString().padStart(2, '0')}`);
       this.saveProgress();
       this.showToast('✓ 进度已重置', 'info');
       if (this.levels.length > 0) this.loadLevel(this.levels[0].id);
@@ -497,14 +497,14 @@ h1{color:#ff6b9d}table{width:100%;border-collapse:collapse;margin:16px 0}td,th{p
     },
 
     chapterProgress(chId) {
-      const chNum = chId.replace('ch0', '');
+      const chNum = parseInt(chId.replace('ch', ''));
       const chLevels = this.levels.filter(l => l.id.startsWith(`Q${chNum}.`));
       const done = chLevels.filter(l => this.progress.completed_levels.includes(l.id)).length;
       return `${done}/${chLevels.length}`;
     },
 
     chapterProgressPercent(chId) {
-      const chNum = chId.replace('ch0', '');
+      const chNum = parseInt(chId.replace('ch', ''));
       const chLevels = this.levels.filter(l => l.id.startsWith(`Q${chNum}.`));
       if (!chLevels.length) return 0;
       const done = chLevels.filter(l => this.progress.completed_levels.includes(l.id)).length;
@@ -512,7 +512,7 @@ h1{color:#ff6b9d}table{width:100%;border-collapse:collapse;margin:16px 0}td,th{p
     },
 
     chapterLevels(chId) {
-      const chNum = chId.replace('ch0', '');
+      const chNum = parseInt(chId.replace('ch', ''));
       return this.levels.filter(l => l.id.startsWith(`Q${chNum}.`));
     },
 
