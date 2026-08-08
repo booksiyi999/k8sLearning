@@ -553,6 +553,121 @@ spec:
         assert r.state is not None
         assert "db-isolation" in r.state.networkpolicies
 
+    def test_simulate_traffic_allows_backend(self):
+        """simulate_traffic 验证: backend -> database:5432 应该被允许"""
+        from app.simulator import simulate_traffic
+        yaml = """
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: db-isolation
+spec:
+  podSelector:
+    matchLabels:
+      app: database
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: backend
+    ports:
+    - protocol: TCP
+      port: 5432
+"""
+        r = get_level("Q12.5").check_fn(yaml)
+        assert r.ok, r.error
+        assert r.state is not None
+        # 验证 check_fn 内部预设了 Pod
+        assert "backend-pod" in r.state.pods
+        assert "database-pod" in r.state.pods
+        assert "frontend-pod" in r.state.pods
+        # 直接调用 simulate_traffic 确认行为
+        result = simulate_traffic(r.state, "backend-pod", "database-pod", 5432)
+        assert result["allowed"] is True
+
+    def test_simulate_traffic_denies_frontend(self):
+        """simulate_traffic 验证: frontend -> database:5432 应该被拒绝"""
+        from app.simulator import simulate_traffic
+        yaml = """
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: db-isolation
+spec:
+  podSelector:
+    matchLabels:
+      app: database
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: backend
+    ports:
+    - protocol: TCP
+      port: 5432
+"""
+        r = get_level("Q12.5").check_fn(yaml)
+        assert r.ok, r.error
+        assert r.state is not None
+        result = simulate_traffic(r.state, "frontend-pod", "database-pod", 5432)
+        assert result["allowed"] is False
+
+    def test_false_positive_caught_wrong_from_label(self):
+        """假阳性捕获: from 允许 app: frontend（而非 backend）-> 应失败"""
+        yaml = """
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: wrong-from
+spec:
+  podSelector:
+    matchLabels:
+      app: database
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: frontend
+    ports:
+    - protocol: TCP
+      port: 5432
+"""
+        r = get_level("Q12.5").check_fn(yaml)
+        # from 允许 frontend 而非 backend -> backend 无法访问 -> simulate_traffic 检测到
+        assert not r.ok
+        assert "backend" in r.error or "拒绝" in r.error
+
+    def test_false_positive_caught_allow_all(self):
+        """假阳性捕获: from 为 [{}]（允许所有来源）-> frontend 也能访问 -> 应失败"""
+        yaml = """
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-all
+spec:
+  podSelector:
+    matchLabels:
+      app: database
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - {}
+    ports:
+    - protocol: TCP
+      port: 5432
+"""
+        r = get_level("Q12.5").check_fn(yaml)
+        # from: [{}] -> 匹配所有来源 -> frontend 也能访问 -> simulate_traffic 检测到
+        assert not r.ok
+        assert "frontend" in r.error or "过于宽松" in r.error
+
     def test_empty_pod_selector(self):
         """podSelector 为空 {}，没有选择数据库 Pod"""
         yaml = """

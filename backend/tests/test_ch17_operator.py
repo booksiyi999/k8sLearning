@@ -676,45 +676,120 @@ class TestQ175DeployOperator:
 
 
 # =====================================================================
-# Q17.6 Reconcile 循环骨架
+# Q17.6 Reconcile 循环骨架 - YAML 结构校验
 # =====================================================================
 
-VALID_Q176_A = (
-    "The Reconcile loop works by first using watch to monitor resource changes, "
-    "then compare the desired state with the actual state, "
-    "and finally act to make the actual state match the desired state."
-)
+VALID_Q176 = """\
+apiVersion: blog.example.com/v1
+kind: Blog
+metadata:
+  name: my-blog
+spec:
+  title: "Hello Blog"
+status:
+  observedGeneration: 1
+  conditions:
+  - type: Ready
+    status: "True"
+    lastTransitionTime: "2024-01-01T00:00:00Z"
+"""
 
-VALID_Q176_B = (
-    "When the reconcile function encounters an error, "
-    "it returns a result with requeue set to true, "
-    "so the error can be retried later."
-)
+INVALID_Q176_NO_STATUS = """\
+apiVersion: blog.example.com/v1
+kind: Blog
+metadata:
+  name: my-blog
+spec:
+  title: "Hello Blog"
+"""
 
-INVALID_Q176 = (
-    "The operator just runs and does things when it feels like it."
-)
+INVALID_Q176_NO_CONDITIONS = """\
+apiVersion: blog.example.com/v1
+kind: Blog
+metadata:
+  name: my-blog
+spec:
+  title: "Hello Blog"
+status:
+  observedGeneration: 1
+"""
+
+INVALID_Q176_NO_OBSERVED_GEN = """\
+apiVersion: blog.example.com/v1
+kind: Blog
+metadata:
+  name: my-blog
+spec:
+  title: "Hello Blog"
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+    lastTransitionTime: "2024-01-01T00:00:00Z"
+"""
+
+INVALID_Q176_CONDITION_MISSING_FIELD = """\
+apiVersion: blog.example.com/v1
+kind: Blog
+metadata:
+  name: my-blog
+spec:
+  title: "Hello Blog"
+status:
+  observedGeneration: 1
+  conditions:
+  - type: Ready
+    status: "True"
+"""
+
+INVALID_Q176_EMPTY_CONDITIONS = """\
+apiVersion: blog.example.com/v1
+kind: Blog
+metadata:
+  name: my-blog
+spec:
+  title: "Hello Blog"
+status:
+  observedGeneration: 1
+  conditions: []
+"""
 
 
 class TestQ176ReconcileLoop:
-    def test_valid_pattern_a_passes(self):
-        r = _check("Q17.6", VALID_Q176_A)
-        assert r.ok, f"Pattern A (watch/compare/act) should pass: {r.error}"
+    def test_valid_passes(self):
+        r = _check("Q17.6", VALID_Q176)
+        assert r.ok, f"Valid CR with status fields should pass: {r.error}"
 
-    def test_valid_pattern_b_passes(self):
-        r = _check("Q17.6", VALID_Q176_B)
-        assert r.ok, f"Pattern B (reconcile/error/requeue) should pass: {r.error}"
+    def test_no_status_fails(self):
+        r = _check("Q17.6", INVALID_Q176_NO_STATUS)
+        assert not r.ok
+        assert "status" in r.error.lower()
 
-    def test_invalid_fails(self):
-        r = _check("Q17.6", INVALID_Q176)
+    def test_no_conditions_fails(self):
+        r = _check("Q17.6", INVALID_Q176_NO_CONDITIONS)
+        assert not r.ok
+        assert "conditions" in r.error.lower()
+
+    def test_no_observed_generation_fails(self):
+        r = _check("Q17.6", INVALID_Q176_NO_OBSERVED_GEN)
+        assert not r.ok
+        assert "observedgeneration" in r.error.lower()
+
+    def test_condition_missing_field_fails(self):
+        r = _check("Q17.6", INVALID_Q176_CONDITION_MISSING_FIELD)
+        assert not r.ok
+        assert "lasttransitiontime" in r.error.lower()
+
+    def test_empty_conditions_fails(self):
+        r = _check("Q17.6", INVALID_Q176_EMPTY_CONDITIONS)
         assert not r.ok
 
-    def test_empty_fails(self):
+    def test_empty_yaml_fails(self):
         r = _check("Q17.6", "")
         assert not r.ok
 
-    def test_partial_pattern_fails(self):
-        """Only 'watch' and 'compare' but no 'act'"""
+    def test_keyword_only_text_fails(self):
+        """关键词文本不应通过（不再是关键词匹配）"""
         r = _check("Q17.6", "The operator will watch and compare things.")
         assert not r.ok
 
@@ -795,6 +870,20 @@ class TestQ177OwnerReference:
         assert not r.ok
         assert "name" in r.error.lower()
 
+    def test_empty_apiversion_fails(self):
+        """apiVersion 为空字符串应失败"""
+        yaml_bad = VALID_Q177.replace("  - apiVersion: apps/v1", '  - apiVersion: ""')
+        r = _check("Q17.7", yaml_bad)
+        assert not r.ok
+        assert "apiversion" in r.error.lower()
+
+    def test_empty_name_fails(self):
+        """name 为空字符串应失败"""
+        yaml_bad = VALID_Q177.replace("    name: blog-operator", '    name: ""')
+        r = _check("Q17.7", yaml_bad)
+        assert not r.ok
+        assert "name" in r.error.lower()
+
 
 # =====================================================================
 # Q17.8 Finalizer 概念
@@ -855,6 +944,24 @@ class TestQ178Finalizer:
     def test_empty_string_finalizer_fails(self):
         yaml_bad = VALID_Q178.replace(
             "  - blog.example.com/cleanup", '  - ""'
+        )
+        r = _check("Q17.8", yaml_bad)
+        assert not r.ok
+
+    def test_finalizer_without_slash_fails(self):
+        """finalizer 名称不包含 '/' 应失败"""
+        yaml_bad = VALID_Q178.replace(
+            "  - blog.example.com/cleanup", "  - cleanup"
+        )
+        r = _check("Q17.8", yaml_bad)
+        assert not r.ok
+        assert "/" in r.error or "格式" in r.error
+
+    def test_finalizer_string_not_list_fails(self):
+        """finalizers 是单个字符串而非列表应失败"""
+        yaml_bad = VALID_Q178.replace(
+            "  finalizers:\n  - blog.example.com/cleanup",
+            '  finalizers: blog.example.com/cleanup'
         )
         r = _check("Q17.8", yaml_bad)
         assert not r.ok
@@ -957,7 +1064,8 @@ class TestQ179Conditions:
             '    message: "Blog deployment is running"\n'
             '  - type: Available\n'
             '    status: "True"\n'
-            '    lastTransitionTime: "2024-01-01T00:00:00Z"',
+            '    lastTransitionTime: "2024-01-01T00:00:00Z"\n'
+            '    reason: ServiceAvailable',
         )
         r = _check("Q17.9", yaml_good)
         assert r.ok
@@ -968,63 +1076,222 @@ class TestQ179Conditions:
         assert not r.ok
         assert "status" in r.error.lower()
 
+    def test_invalid_status_lowercase_fails(self):
+        """status 为小写 'true' 应失败"""
+        yaml_bad = VALID_Q179.replace('status: "True"', 'status: "true"')
+        r = _check("Q17.9", yaml_bad)
+        assert not r.ok
+        assert "status" in r.error.lower()
+
+    def test_invalid_status_value_fails(self):
+        """status 不是 True/False/Unknown 应失败"""
+        yaml_bad = VALID_Q179.replace('status: "True"', 'status: "Running"')
+        r = _check("Q17.9", yaml_bad)
+        assert not r.ok
+        assert "status" in r.error.lower()
+
+    def test_status_unknown_passes(self):
+        """status 为 'Unknown' 应通过"""
+        yaml_good = VALID_Q179.replace('status: "True"', 'status: "Unknown"')
+        r = _check("Q17.9", yaml_good)
+        assert r.ok
+
+    def test_missing_reason_fails(self):
+        """缺少 reason 字段应失败"""
+        yaml_bad = VALID_Q179.replace("    reason: DeploymentReady\n", "")
+        r = _check("Q17.9", yaml_bad)
+        assert not r.ok
+        assert "reason" in r.error.lower()
+
+    def test_empty_type_fails(self):
+        """type 为空字符串应失败"""
+        yaml_bad = VALID_Q179.replace("type: Ready", 'type: ""')
+        r = _check("Q17.9", yaml_bad)
+        assert not r.ok
+        assert "type" in r.error.lower()
+
 
 # =====================================================================
-# Q17.10 Operator 最佳实践总结
+# Q17.10 Operator 最佳实践总结 - YAML 综合校验
 # =====================================================================
 
-VALID_Q1710_ALL = (
-    "Operator 的 Reconcile 循环必须是幂等的，即多次执行结果相同。"
-    "当遇到错误时，通过 requeue 重新排队等待重试。"
-    "使用 finalizer 确保资源删除前执行清理逻辑。"
-    "通过 ownerReference 建立父子关系实现级联删除。"
-)
+VALID_Q1710_ALL = """\
+apiVersion: blog.example.com/v1
+kind: Blog
+metadata:
+  name: best-practice-blog
+  ownerReferences:
+  - apiVersion: blog.example.com/v1
+    kind: Blog
+    name: parent-blog
+    uid: abc-123-def
+    controller: true
+  finalizers:
+  - blog.example.com/cleanup
+spec:
+  title: "Best Practice Blog"
+  author: "operator"
+status:
+  observedGeneration: 1
+  conditions:
+  - type: Ready
+    status: "True"
+    lastTransitionTime: "2024-01-01T00:00:00Z"
+    reason: DeploymentReady
+    message: "Blog deployment is running"
+"""
 
-VALID_Q1710_THREE = (
-    "Operator should be 幂等 meaning reconcile produces the same result. "
-    "Errors trigger a requeue for retry. "
-    "Use finalizer for cleanup before deletion."
-)
+INVALID_Q1710_NO_SPEC = """\
+apiVersion: blog.example.com/v1
+kind: Blog
+metadata:
+  name: best-practice-blog
+  ownerReferences:
+  - apiVersion: blog.example.com/v1
+    kind: Blog
+    name: parent-blog
+    uid: abc-123-def
+  finalizers:
+  - blog.example.com/cleanup
+status:
+  observedGeneration: 1
+  conditions:
+  - type: Ready
+    status: "True"
+    lastTransitionTime: "2024-01-01T00:00:00Z"
+    reason: DeploymentReady
+"""
 
-INVALID_Q1710_ONE = (
-    "Operators are cool and run on Kubernetes."
-)
+INVALID_Q1710_NO_STATUS = """\
+apiVersion: blog.example.com/v1
+kind: Blog
+metadata:
+  name: best-practice-blog
+  ownerReferences:
+  - apiVersion: blog.example.com/v1
+    kind: Blog
+    name: parent-blog
+    uid: abc-123-def
+  finalizers:
+  - blog.example.com/cleanup
+spec:
+  title: "Best Practice Blog"
+"""
 
-INVALID_Q1710_TWO = (
-    "The reconcile loop should be 幂等. "
-    "Use requeue for retries."
-)
+INVALID_Q1710_NO_OWNER_REFS = """\
+apiVersion: blog.example.com/v1
+kind: Blog
+metadata:
+  name: best-practice-blog
+  finalizers:
+  - blog.example.com/cleanup
+spec:
+  title: "Best Practice Blog"
+status:
+  observedGeneration: 1
+  conditions:
+  - type: Ready
+    status: "True"
+    lastTransitionTime: "2024-01-01T00:00:00Z"
+    reason: DeploymentReady
+"""
+
+INVALID_Q1710_NO_FINALIZERS = """\
+apiVersion: blog.example.com/v1
+kind: Blog
+metadata:
+  name: best-practice-blog
+  ownerReferences:
+  - apiVersion: blog.example.com/v1
+    kind: Blog
+    name: parent-blog
+    uid: abc-123-def
+spec:
+  title: "Best Practice Blog"
+status:
+  observedGeneration: 1
+  conditions:
+  - type: Ready
+    status: "True"
+    lastTransitionTime: "2024-01-01T00:00:00Z"
+    reason: DeploymentReady
+"""
+
+INVALID_Q1710_NO_CONDITIONS = """\
+apiVersion: blog.example.com/v1
+kind: Blog
+metadata:
+  name: best-practice-blog
+  ownerReferences:
+  - apiVersion: blog.example.com/v1
+    kind: Blog
+    name: parent-blog
+    uid: abc-123-def
+  finalizers:
+  - blog.example.com/cleanup
+spec:
+  title: "Best Practice Blog"
+status:
+  observedGeneration: 1
+"""
+
+INVALID_Q1710_MINIMAL = """\
+apiVersion: blog.example.com/v1
+kind: Blog
+metadata:
+  name: minimal-blog
+spec:
+  title: "Minimal Blog"
+"""
 
 
 class TestQ1710BestPractices:
-    def test_all_four_passes(self):
+    def test_all_fields_passes(self):
         r = _check("Q17.10", VALID_Q1710_ALL)
-        assert r.ok, f"All 4 concepts should pass: {r.error}"
+        assert r.ok, f"CR with all best practice fields should pass: {r.error}"
 
-    def test_three_passes(self):
-        r = _check("Q17.10", VALID_Q1710_THREE)
-        assert r.ok, f"3 concepts should pass: {r.error}"
-
-    def test_one_fails(self):
-        r = _check("Q17.10", INVALID_Q1710_ONE)
+    def test_no_spec_fails(self):
+        r = _check("Q17.10", INVALID_Q1710_NO_SPEC)
         assert not r.ok
+        assert "spec" in r.error.lower()
 
-    def test_two_fails(self):
-        r = _check("Q17.10", INVALID_Q1710_TWO)
+    def test_no_status_fails(self):
+        r = _check("Q17.10", INVALID_Q1710_NO_STATUS)
+        assert not r.ok
+        assert "status" in r.error.lower()
+
+    def test_no_owner_refs_fails(self):
+        r = _check("Q17.10", INVALID_Q1710_NO_OWNER_REFS)
+        assert not r.ok
+        assert "ownerreferences" in r.error.lower()
+
+    def test_no_finalizers_fails(self):
+        r = _check("Q17.10", INVALID_Q1710_NO_FINALIZERS)
+        assert not r.ok
+        assert "finalizers" in r.error.lower()
+
+    def test_no_conditions_fails(self):
+        r = _check("Q17.10", INVALID_Q1710_NO_CONDITIONS)
+        assert not r.ok
+        assert "conditions" in r.error.lower()
+
+    def test_minimal_cr_fails(self):
+        r = _check("Q17.10", INVALID_Q1710_MINIMAL)
         assert not r.ok
 
     def test_empty_fails(self):
         r = _check("Q17.10", "")
         assert not r.ok
 
-    def test_owner_reference_and_finalizer_passes(self):
+    def test_keyword_text_fails(self):
+        """关键词文本不应通过（不再是关键词匹配）"""
         text = (
-            "Using ownerReference for cascade deletion of child resources. "
-            "Using finalizer to ensure cleanup logic runs before resource deletion. "
-            "The reconcile loop should be 幂等."
+            "Operator should be 幂等 meaning reconcile produces the same result. "
+            "Errors trigger a requeue for retry. "
+            "Use finalizer for cleanup before deletion."
         )
         r = _check("Q17.10", text)
-        assert r.ok, f"3 concepts (ownerReference, finalizer, 幂等) should pass: {r.error}"
+        assert not r.ok
 
 
 # =====================================================================

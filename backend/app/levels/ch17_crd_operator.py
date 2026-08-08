@@ -1840,31 +1840,92 @@ spec:
 
 # ==================== Q17.6 Reconcile 循环骨架 ====================
 
-def _check_176_reconcile_loop(user_input: str) -> CheckResult:
-    """Q17.6 Reconcile 循环骨架 - 识别关键模式"""
-    text = user_input.lower()
+def _check_176_reconcile_loop(user_yaml: str) -> CheckResult:
+    """Q17.6 Reconcile 循环骨架 - 验证 CR 的 status 字段符合 Reconcile 循环写入的模式"""
+    try:
+        docs = list(yaml.safe_load_all(user_yaml))
+    except yaml.YAMLError as e:
+        return CheckResult(ok=False, error=f"YAML 解析失败：{e}", hints=[])
+    except RecursionError:
+        return CheckResult(ok=False, error="YAML 嵌套层级过深", hints=[])
 
-    # 模式 1: watch -> compare -> act
-    has_watch_compare_act = all(kw in text for kw in ["watch", "compare", "act"])
-    # 模式 2: reconcile -> error -> requeue
-    has_reconcile_error_requeue = all(kw in text for kw in ["reconcile", "error", "requeue"])
+    for doc in docs:
+        if doc is None or not isinstance(doc, dict):
+            continue
 
-    if has_watch_compare_act or has_reconcile_error_requeue:
+        status = doc.get("status")
+        if not isinstance(status, dict):
+            continue
+
+        # 验证: status.conditions 是列表，每项有 type/status/lastTransitionTime
+        conditions = status.get("conditions")
+        if not isinstance(conditions, list):
+            return CheckResult(
+                ok=False,
+                error="status.conditions 必须是列表（Reconcile 循环通过 conditions 报告状态）",
+                hints=[
+                    "Reconcile 循环会将处理结果写入 status.conditions",
+                    "conditions 是一个列表，每项包含 type/status/lastTransitionTime",
+                    "示例: status:\\n  conditions:\\n  - type: Ready\\n    status: \"True\"\\n    lastTransitionTime: \"2024-01-01T00:00:00Z\"",
+                ],
+            )
+
+        if not conditions:
+            return CheckResult(
+                ok=False,
+                error="status.conditions 是空列表（需要至少一个 condition）",
+                hints=["Reconcile 循环至少会写入一个 condition 来反映处理结果"],
+            )
+
+        required_cond_fields = ["type", "status", "lastTransitionTime"]
+        for i, cond in enumerate(conditions):
+            if not isinstance(cond, dict):
+                return CheckResult(
+                    ok=False,
+                    error=f"conditions[{i}] 必须是映射（dict）",
+                    hints=["每个 condition 是一个对象"],
+                )
+            missing = [f for f in required_cond_fields if not cond.get(f)]
+            if missing:
+                return CheckResult(
+                    ok=False,
+                    error=f"conditions[{i}] 缺少必需字段: {', '.join(missing)}",
+                    hints=[
+                        "每个 condition 必须包含: type, status, lastTransitionTime",
+                        "这些字段由 Reconcile 循环在处理 CR 时写入",
+                    ],
+                )
+
+        # 验证: status.observedGeneration 存在（表示 controller 已处理）
+        observed_gen = status.get("observedGeneration")
+        if observed_gen is None:
+            return CheckResult(
+                ok=False,
+                error="status 缺少 observedGeneration 字段（表示 controller 已处理当前 generation）",
+                hints=[
+                    "observedGeneration 表示 Controller 已经观察并处理了 CR 的第几代版本",
+                    "当用户更新 spec 时，metadata.generation 会递增",
+                    "Controller 处理后会更新 status.observedGeneration，使其与 generation 一致",
+                    "示例: status:\\n  observedGeneration: 1",
+                ],
+            )
+
         return CheckResult(
             ok=True, state=ClusterState(),
             hints=[
-                "正确！你识别出了 Reconcile 循环的关键模式 🔄",
+                "CR 的 status 结构符合 Reconcile 循环写入的模式 🔄",
+                f"  conditions: {len(conditions)} 个, observedGeneration: {observed_gen}",
                 "水平触发 + 优雅退出 + Requeue 是 Operator 可靠性的基石",
             ],
         )
 
     return CheckResult(
         ok=False,
-        error="未识别出 Reconcile 循环的关键模式",
+        error="未找到有效的 status 字段（Reconcile 循环会通过 status 子资源写入处理结果）",
         hints=[
-            "方法 1: 描述 watch -> compare -> act 三步循环",
-            "方法 2: 描述 reconcile -> error -> requeue 模式",
-            "关键词: watch, compare, act 或 reconcile, error, requeue",
+            "提交一个包含 status 字段的 CR YAML",
+            "status 应包含 conditions 列表和 observedGeneration",
+            "示例:\napiVersion: blog.example.com/v1\nkind: Blog\nmetadata:\n  name: my-blog\nspec:\n  title: Hello\nstatus:\n  observedGeneration: 1\n  conditions:\n  - type: Ready\n    status: \"True\"\n    lastTransitionTime: \"2024-01-01T00:00:00Z\"",
         ],
     )
 
@@ -1876,7 +1937,7 @@ LEVEL_Q17_6 = Level(
     description="""
 # Reconcile 循环骨架 🔄
 
-Reconcile 循环是 Operator 的核心。理解它的关键模式是掌握 Operator 开发的基础。
+Reconcile 循环是 Operator 的核心。理解它如何通过 status 字段反映处理结果是掌握 Operator 开发的基础。
 
 ## 代码示例
 
@@ -1905,28 +1966,41 @@ def Reconcile(ctx, req):
 
 ## 任务
 
-阅读上面的代码，用自己的话描述 Reconcile 循环的关键模式。
+Reconcile 循环处理完 CR 后，会通过 `/status` 子资源写入处理结果。请提交一个 **Blog CR YAML**，其 `status` 字段需要符合 Reconcile 循环写入的模式：
 
-你需要包含以下两组关键词中的**至少一组**：
+- `status.conditions` 是列表，每项包含 `type`、`status`、`lastTransitionTime`
+- `status.observedGeneration` 存在（表示 controller 已处理当前 generation）
 
-- **模式 A**: `watch` → `compare` → `act`（三步循环）
-- **模式 B**: `reconcile` → `error` → `requeue`（错误重试）
+## 提示
 
-请在下方输入你的理解（用中文或英文均可，但关键词需要用英文）：
+```yaml
+apiVersion: blog.example.com/v1
+kind: Blog
+metadata:
+  name: my-blog
+spec:
+  title: "Hello Blog"
+status:
+  observedGeneration: 1
+  conditions:
+  - type: Ready
+    status: "True"
+    lastTransitionTime: "2024-01-01T00:00:00Z"
+```
 """,
     starter_yaml="""\
-# 请用文字描述 Reconcile 循环的关键模式。
-#
-# 方法 A: 描述 watch -> compare -> act 三步循环
-#   例如: "Reconcile 循环通过 watch 监听资源变化，
-#         compare 比较期望与实际状态，
-#         act 执行操作使状态趋近。"
-#
-# 方法 B: 描述 reconcile -> error -> requeue 模式
-#   例如: "Reconcile 函数在处理过程中如果遇到 error，
-#         会通过 requeue 重新排队等待重试。"
-#
-# 关键词: watch, compare, act 或 reconcile, error, requeue
+apiVersion: blog.example.com/v1
+kind: Blog
+metadata:
+  name: my-blog
+spec:
+  title: "Hello Blog"
+# status:
+#   observedGeneration: 1
+#   conditions:
+#   - type: Ready
+#     status: "True"
+#     lastTransitionTime: "2024-01-01T00:00:00Z"
 """,
     check_fn=_check_176_reconcile_loop,
     lesson=Lesson(
@@ -2120,6 +2194,28 @@ def _check_177_owner_reference(user_yaml: str) -> CheckResult:
                 hints=[
                     "ownerReferences 每项必须包含 apiVersion, kind, name, uid",
                     "例如: {apiVersion: apps/v1, kind: Deployment, name: blog-operator, uid: abc-123}",
+                ],
+            )
+
+        # 严格校验: apiVersion 不能为空字符串
+        api_version = ref.get("apiVersion")
+        if not isinstance(api_version, str) or not api_version.strip():
+            return CheckResult(
+                ok=False,
+                error="ownerReferences[0].apiVersion 不能为空字符串",
+                hints=[
+                    "apiVersion 必须是有效的 API 版本字符串，如 'apps/v1' 或 'blog.example.com/v1'",
+                ],
+            )
+
+        # 严格校验: name 不能为空
+        ref_name = ref.get("name")
+        if not isinstance(ref_name, str) or not ref_name.strip():
+            return CheckResult(
+                ok=False,
+                error="ownerReferences[0].name 不能为空字符串",
+                hints=[
+                    "name 必须是 Owner 资源的有效名称，如 'blog-operator'",
                 ],
             )
 
@@ -2377,6 +2473,18 @@ def _check_178_finalizer(user_yaml: str) -> CheckResult:
                     ok=False,
                     error=f"finalizers[{i}] 必须是非空字符串",
                     hints=["finalizer 名称通常使用 <domain>/<action> 格式，如 'blog.example.com/cleanup'"],
+                )
+
+            # 严格校验: 每个 finalizer 名称必须包含 '/' （标准格式: domain/resource）
+            if "/" not in f:
+                return CheckResult(
+                    ok=False,
+                    error=f"finalizers[{i}] '{f}' 不符合标准格式（应包含 '/'，格式为 <domain>/<action>）",
+                    hints=[
+                        "Finalizer 名称应使用 <domain>/<action> 格式",
+                        "例如: 'blog.example.com/cleanup' 或 'kubernetes.io/pv-protection'",
+                        "域名前缀确保不同 Operator 的 finalizer 不会冲突",
+                    ],
                 )
 
         return CheckResult(
@@ -2651,6 +2759,42 @@ def _check_179_conditions(user_yaml: str) -> CheckResult:
                     ],
                 )
 
+            # 严格校验: type 是字符串且非空
+            cond_type = cond.get("type")
+            if not isinstance(cond_type, str) or not cond_type.strip():
+                return CheckResult(
+                    ok=False,
+                    error=f"conditions[{i}].type 必须是非空字符串",
+                    hints=[
+                        "type 是条件类型，如 'Ready', 'Available', 'Progressing'",
+                    ],
+                )
+
+            # 严格校验: status 是 'True'/'False'/'Unknown' 之一
+            cond_status = cond.get("status")
+            if cond_status not in ("True", "False", "Unknown"):
+                return CheckResult(
+                    ok=False,
+                    error=f"conditions[{i}].status 必须是 'True'、'False' 或 'Unknown'，实际为 '{cond_status}'",
+                    hints=[
+                        "K8s condition 的 status 只接受三个值: True, False, Unknown",
+                        "注意首字母大写，不要用小写 'true' 或 'false'",
+                    ],
+                )
+
+            # 严格校验: reason 字段存在（K8s 最佳实践）
+            cond_reason = cond.get("reason")
+            if not cond_reason or (isinstance(cond_reason, str) and not cond_reason.strip()):
+                return CheckResult(
+                    ok=False,
+                    error=f"conditions[{i}] 缺少 reason 字段（K8s 最佳实践要求每个 condition 提供 reason）",
+                    hints=[
+                        "reason 是一个 CamelCase 字符串，表示状态的原因",
+                        "例如: reason: DeploymentReady, reason: DeploymentNotFound",
+                        "reason 帮助用户和监控系统理解 condition 为何处于当前状态",
+                    ],
+                )
+
         return CheckResult(
             ok=True, state=ClusterState(),
             hints=[
@@ -2879,32 +3023,88 @@ status:                                   # 状态（通过 /status 子资源更
 
 # ==================== Q17.10 Operator 最佳实践总结 ====================
 
-def _check_1710_best_practices(user_input: str) -> CheckResult:
-    """Q17.10 Operator 最佳实践总结 - 多选/填空题"""
-    text = user_input.lower()
+def _check_1710_best_practices(user_yaml: str) -> CheckResult:
+    """Q17.10 Operator 最佳实践总结 - 综合校验完整 CR YAML 的最佳实践字段"""
+    try:
+        docs = list(yaml.safe_load_all(user_yaml))
+    except yaml.YAMLError as e:
+        return CheckResult(ok=False, error=f"YAML 解析失败：{e}", hints=[])
+    except RecursionError:
+        return CheckResult(ok=False, error="YAML 嵌套层级过深", hints=[])
 
-    # 检查关键词（至少包含 3 个）
-    keywords = ["幂等", "requeue", "finalizer", "ownerreference"]
-    found = [kw for kw in keywords if kw in text]
+    for doc in docs:
+        if doc is None or not isinstance(doc, dict):
+            continue
 
-    if len(found) >= 3:
+        missing_items = []
+
+        # 1. 有 spec（用户期望状态）
+        spec = doc.get("spec")
+        if not isinstance(spec, dict) or not spec:
+            missing_items.append("spec（用户期望状态）")
+
+        # 2. 有 status（controller 写入的实际状态）
+        status = doc.get("status")
+        if not isinstance(status, dict) or not status:
+            missing_items.append("status（controller 写入的实际状态）")
+
+        # 3. 有 metadata.ownerReferences（级联删除）
+        metadata = doc.get("metadata")
+        if isinstance(metadata, dict):
+            owner_refs = metadata.get("ownerReferences")
+            if not isinstance(owner_refs, list) or not owner_refs:
+                missing_items.append("metadata.ownerReferences（级联删除）")
+        else:
+            missing_items.append("metadata.ownerReferences（级联删除）")
+
+        # 4. 有 metadata.finalizers（优雅删除）
+        if isinstance(metadata, dict):
+            finalizers = metadata.get("finalizers")
+            if not isinstance(finalizers, list) or not finalizers:
+                missing_items.append("metadata.finalizers（优雅删除）")
+        else:
+            missing_items.append("metadata.finalizers（优雅删除）")
+
+        # 5. 有 status.conditions（状态管理）
+        if isinstance(status, dict):
+            conditions = status.get("conditions")
+            if not isinstance(conditions, list) or not conditions:
+                missing_items.append("status.conditions（状态管理）")
+        else:
+            missing_items.append("status.conditions（状态管理）")
+
+        if missing_items:
+            return CheckResult(
+                ok=False,
+                error=f"CR YAML 缺少以下最佳实践字段: {', '.join(missing_items)}",
+                hints=[
+                    "一个符合 Operator 最佳实践的 CR 应包含以下 5 个部分:",
+                    "  1. spec - 用户期望状态",
+                    "  2. status - controller 写入的实际状态",
+                    "  3. metadata.ownerReferences - 级联删除",
+                    "  4. metadata.finalizers - 优雅删除",
+                    "  5. status.conditions - 状态管理",
+                ],
+            )
+
         return CheckResult(
             ok=True, state=ClusterState(),
             hints=[
-                "优秀！你掌握了 Operator 的核心最佳实践 🏆",
-                f"  识别出的概念: {', '.join(found)}",
+                "优秀！你的 CR YAML 包含了所有 Operator 最佳实践字段 🏆",
+                "  ✅ spec - 用户期望状态",
+                "  ✅ status - controller 写入的实际状态",
+                "  ✅ metadata.ownerReferences - 级联删除",
+                "  ✅ metadata.finalizers - 优雅删除",
+                "  ✅ status.conditions - 状态管理",
             ],
         )
 
     return CheckResult(
         ok=False,
-        error=f"只识别出 {len(found)}/4 个关键概念: {', '.join(found) if found else '无'}",
+        error="未找到有效的 YAML 文档",
         hints=[
-            "请描述以下至少 3 个概念：",
-            "1. 幂等（Idempotent）- Reconcile 多次执行结果相同",
-            "2. requeue - 错误时重新排队重试",
-            "3. finalizer - 资源删除前的清理机制",
-            "4. ownerReference - 父子资源关系与级联删除",
+            "请提交一个完整的 CR YAML，包含 Operator 最佳实践的所有字段",
+            "需要: spec, status, metadata.ownerReferences, metadata.finalizers, status.conditions",
         ],
     )
 
@@ -2916,43 +3116,72 @@ LEVEL_Q17_10 = Level(
     description="""
 # Operator 最佳实践总结 🏆
 
-通过前面 9 关的学习，你已经掌握了 CRD & Operator 的核心知识。这一关是总结性测试，验证你对关键概念的理解。
+通过前面 9 关的学习，你已经掌握了 CRD & Operator 的核心知识。这一关是总结性测试，验证你能否综合运用所有最佳实践。
 
 ## 任务
 
-请用自己的话描述以下 **至少 3 个** Operator 最佳实践概念（关键词需要用英文或中文）：
+提交一个**完整的 Blog CR YAML**，包含以下 5 个 Operator 最佳实践字段：
 
-1. **幂等**（Idempotent）- Reconcile 循环的核心特性
-2. **requeue** - 错误处理与重试机制
-3. **finalizer** - 资源清理机制
-4. **ownerReference** - 父子资源关系
+1. **`spec`** - 用户期望状态（如 title, author）
+2. **`status`** - controller 写入的实际状态
+3. **`metadata.ownerReferences`** - 级联删除（指向 Owner 资源）
+4. **`metadata.finalizers`** - 优雅删除（清理机制）
+5. **`status.conditions`** - 状态管理（多维度状态报告）
+
+全部符合 -> 通过 ✅，否则会指出缺少哪个字段。
 
 ## 提示
 
+```yaml
+apiVersion: blog.example.com/v1
+kind: Blog
+metadata:
+  name: best-practice-blog
+  ownerReferences:
+  - apiVersion: blog.example.com/v1
+    kind: Blog
+    name: parent-blog
+    uid: abc-123-def
+    controller: true
+  finalizers:
+  - blog.example.com/cleanup
+spec:
+  title: "Best Practice Blog"
+  author: "operator"
+status:
+  observedGeneration: 1
+  conditions:
+  - type: Ready
+    status: "True"
+    lastTransitionTime: "2024-01-01T00:00:00Z"
+    reason: DeploymentReady
+    message: "Blog deployment is running"
 ```
-例如：
-"Operator 的 Reconcile 循环必须是幂等的，即多次执行结果相同。
- 当遇到错误时，通过 requeue 重新排队等待重试。
- 使用 finalizer 确保资源删除前执行清理逻辑，
- 通过 ownerReference 建立父子关系实现级联删除。"
-```
-
-关键词：幂等, requeue, finalizer, ownerReference
 """,
     starter_yaml="""\
-# 请描述至少 3 个 Operator 最佳实践概念。
-#
-# 关键词（至少包含 3 个）：
-# 1. 幂等 - Reconcile 多次执行结果相同
-# 2. requeue - 错误时重新排队重试
-# 3. finalizer - 资源删除前的清理机制
-# 4. ownerReference - 父子资源关系与级联删除
-#
-# 例如：
-# "Operator 的 Reconcile 循环必须是幂等的。
-#  遇到错误时通过 requeue 重试。
-#  使用 finalizer 确保清理逻辑被执行。
-#  通过 ownerReference 实现级联删除。"
+apiVersion: blog.example.com/v1
+kind: Blog
+metadata:
+  name: best-practice-blog
+  # ownerReferences:
+  # - apiVersion: blog.example.com/v1
+  #   kind: Blog
+  #   name: parent-blog
+  #   uid: abc-123-def
+  #   controller: true
+  # finalizers:
+  # - blog.example.com/cleanup
+spec:
+  title: "Best Practice Blog"
+  author: "operator"
+# status:
+#   observedGeneration: 1
+#   conditions:
+#   - type: Ready
+#     status: "True"
+#     lastTransitionTime: "2024-01-01T00:00:00Z"
+#     reason: DeploymentReady
+#     message: "Blog deployment is running"
 """,
     check_fn=_check_1710_best_practices,
     lesson=Lesson(

@@ -7,7 +7,7 @@ Q9.4 创建 ClusterRoleBinding
 Q9.5 集群实战 - 为 ServiceAccount 授权
 """
 from app.validator import Level, CheckResult, Lesson
-from app.simulator import apply_manifest, preset_state, ClusterState, K8sError
+from app.simulator import apply_manifest, preset_state, ClusterState, K8sError, simulate_rbac_check
 
 
 # ==================== Q9.1 创建 Role ====================
@@ -806,13 +806,47 @@ def _check_95_sa_authorization(user_yaml: str) -> CheckResult:
             hints=["subjects 的 kind 设为 ServiceAccount"],
         )
 
+    # 提取 SA 名称用于权限验证
+    sa_name = None
+    for s in subjects:
+        if isinstance(s, dict) and s.get("kind") == "ServiceAccount":
+            sa_name = s.get("name")
+            break
+    if not sa_name:
+        return CheckResult(
+            ok=False,
+            error="无法提取 ServiceAccount 名称",
+            hints=["subjects 中的 ServiceAccount 需要有 name 字段"],
+        )
+
+    # P1 修复：调用 simulate_rbac_check 验证权限是否真正生效
+    # 模拟 kubectl auth can-i list pods --as=system:serviceaccount:default:<sa_name>
+    # 此前 check_fn 只做结构校验（Role/RoleBinding 存在即通过），
+    # 但不验证 SA 是否真正获得了对应权限，导致假阳性。
+    if not simulate_rbac_check(state, sa_name, "list", "pods"):
+        return CheckResult(
+            ok=False,
+            error=(
+                f"权限未生效：ServiceAccount '{sa_name}' 没有 list pods 权限。"
+                f"请检查 Role 的 rules 是否包含 pods 资源和 list 操作。"
+            ),
+            hints=[
+                "确保 Role 的 rules 中 resources 包含 'pods'",
+                "确保 Role 的 rules 中 verbs 包含 'list'",
+                f"模拟命令: kubectl auth can-i list pods "
+                f"--as=system:serviceaccount:default:{sa_name}",
+            ],
+        )
+
     return CheckResult(
         ok=True, state=state,
         hints=[
-            "YAML 校验通过！在真实集群上执行：",
+            f"✅ 权限验证通过！ServiceAccount '{sa_name}' 已获得 list pods 权限",
+            "在真实集群上执行：",
             "  kubectl apply -f <your-yaml>",
-            "  kubectl get role,rolebinding",
-            "  kubectl auth can-i get pods --as=system:serviceaccount:default:my-sa",
+            "  kubectl get role,rolebinding,serviceaccount",
+            f"  kubectl auth can-i list pods "
+            f"--as=system:serviceaccount:default:{sa_name}",
         ],
     )
 

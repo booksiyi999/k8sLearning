@@ -84,6 +84,41 @@ LEVEL_Q0_1 = Level(
     description="""
 # K8s 架构总览 🏗️
 
+## 为什么学 K8s？
+
+### 容器化时代的挑战
+
+Docker 解决了应用打包问题——「一次构建，到处运行」不再是梦。但当你从 1 个容器
+走向 100 个、1000 个容器时，新问题接踵而至：
+
+- 多容器怎么**编排**？谁负责把它们调度到合适的机器上？
+- 容器挂了谁来**自动重启**？深夜告警你愿意爬起来吗？
+- 流量高峰怎么**自动扩容**、低谷怎么**缩容**省钱？
+- 跨多台机器怎么保证**网络互通**和**服务发现**？
+
+Docker 只解决了「打包」，而 **Kubernetes 解决了「编排」**——它是容器时代的操作系统。
+
+### K8s 成为业界标准
+
+- **Google 开源**：基于 Google 内部十余年大规模容器编排经验（Borg 系统）
+- **CNCF 护航**：2015 年捐赠给 CNCF（云原生计算基金会），成为其第一个「毕业」项目
+- **全云原生支持**：AWS EKS / Azure AKS / 阿里云 ACK / 华为云 CCE 均基于 K8s
+- **GitHub 10 万+ Star**，CNCF 生态中最大的项目，社区极其活跃
+
+### 企业为什么拥抱 K8s
+
+| 能力 | 价值 |
+|---|---|
+| **声明式运维** | 写 YAML 而非手动操作，可版本控制、可审计、可回溯 |
+| **自愈能力** | Pod 挂了自动重建，Node 挂了自动迁移，无需人工干预 |
+| **弹性伸缩** | HPA 按负载自动扩缩容，应对流量波动 |
+| **多云不锁定** | 同一套 YAML 可部署到任何 K8s 集群，不被单一云厂商绑架 |
+| **生态丰富** | Helm / Istio / Prometheus / Grafana 等周边工具成熟 |
+
+> 零基础也不用怕——本教程从架构概念开始，一步步带你从 YAML 小白到 K8s 实战达人。
+
+---
+
 欢迎来到 k8s-quest 第 0 章！在写第一行 YAML 之前，先建立 K8s 全景认知。
 
 ## K8s 集群架构
@@ -138,6 +173,71 @@ metadata:
     check_fn=_check_01_architecture,
     lesson=Lesson(
         concept="""\
+## Kubernetes 的历史由来
+
+Kubernetes 并非凭空诞生，它站在巨人的肩膀上——Google 内部十余年大规模容器编排经验的结晶。
+
+### 从 Borg 到 Kubernetes
+
+| 时间 | 里程碑 | 说明 |
+|---|---|---|
+| **2003** | **Borg 系统** | Google 内部开始大规模使用 Borg，管理数万台服务器上的海量容器（内部称为「任务」），支撑 Google 搜索、Gmail 等核心服务长达十余年 |
+| **2013** | **Omega 项目** | Borg 的下一代，采用分层架构和乐观并发控制，是 Borg 到 Kubernetes 的过渡研究 |
+| **2014** | **Kubernetes 开源** | Google 基于 Borg/Omega 的经验，由 Joe Beda、Brendan Burns、Craig McLuckie 等人主导开源 Kubernetes。名字源自希腊语「舵手」，缩写 K8s |
+| **2015** | **捐赠 CNCF** | Kubernetes 成为 CNCF（云原生计算基金会）的第一个托管项目，标志着它从 Google 主导走向社区共治 |
+| **2018** | **首个毕业项目** | Kubernetes 成为 CNCF 首个「毕业」（Graduated）项目，标志着其成熟度和社区治理达到业界标准 |
+| **2018+** | **业界事实标准** | 从此 K8s 成为容器编排领域的事实标准，各大云厂商纷纷推出托管服务 |
+
+### 当前生态
+
+今天，所有主流云厂商都提供 K8s 托管服务：
+
+- **AWS EKS**（Amazon Elastic Kubernetes Service）
+- **Azure AKS**（Azure Kubernetes Service）
+- **阿里云 ACK**（Alibaba Cloud Container Service for Kubernetes）
+- **华为云 CCE**（Cloud Container Engine）
+- **Google GKE**（Google Kubernetes Engine，K8s 的「老家」）
+
+> 💡 K8s 的名字由来：K**8**s = Kubernetes 中首尾字母 K 和 s 之间有 8 个字母（ubernete）。
+
+## 企业拥抱 K8s 的核心价值
+
+为什么从初创公司到世界 500 强都在用 K8s？核心价值如下：
+
+1. **声明式运维**
+   - 你写 YAML 声明「想要什么状态」，K8s 负责让集群达到并维持这个状态
+   - YAML 文件可以纳入 Git 版本控制，每次变更可审计、可回溯
+   - 告别人肉操作，运维从「手艺活」变成「工程化」
+
+2. **自愈能力**
+   - Pod 崩溃 → K8s 自动重建新 Pod 补上
+   - Node 宕机 → K8s 自动将该 Node 上的 Pod 迁移到其他健康 Node
+   - 凌晨 3 点容器挂了？你不用醒，K8s 帮你搞定
+
+3. **弹性伸缩**
+   - HPA（Horizontal Pod Autoscaler）按 CPU/内存/自定义指标自动扩缩容
+   - 流量高峰自动加 Pod，流量低谷自动减 Pod，省钱又稳定
+
+4. **滚动更新与回滚**
+   - `kubectl rollout` 一键滚动更新，零停机部署
+   - 新版本有问题？`kubectl rollout undo` 一键回滚到上一个版本
+
+5. **多云不锁定**
+   - 同一套 YAML 可以部署到任何 K8s 集群（本地、AWS、Azure、阿里云……）
+   - 不被单一云厂商绑架，迁移成本大幅降低
+
+6. **生态丰富**
+   - **Helm**：K8s 的「包管理器」，一键安装复杂应用
+   - **Istio**：服务网格，管理微服务间流量和安全
+   - **Prometheus + Grafana**：监控与可视化
+   - **ArgoCD**：GitOps 持续部署
+   - 周边工具链极其成熟，开箱即用
+
+7. **社区活跃**
+   - CNCF 生态中最大的项目，GitHub **10 万+ Star**
+   - 全球数万名贡献者，版本快速迭代（每年 3-4 个大版本）
+   - 遇到问题？社区早已有人解答
+
 ## Kubernetes 架构全景
 
 Kubernetes 集群采用**主从架构**，分为**控制面（Control Plane）**和**数据面（Worker Nodes）**两大平面。

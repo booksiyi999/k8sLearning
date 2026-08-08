@@ -7,7 +7,7 @@ Q12.4 入站/出站规则
 Q12.5 集群实战 - 数据库网络隔离
 """
 from app.validator import Level, CheckResult, Lesson
-from app.simulator import apply_manifest, preset_state, ClusterState, K8sError
+from app.simulator import apply_manifest, preset_state, ClusterState, K8sError, simulate_traffic
 
 
 # ==================== Q12.1 创建 NetworkPolicy（默认拒绝） ====================
@@ -655,8 +655,55 @@ spec:                                        # 规格
 
 def _check_124_ingress_egress(user_yaml: str) -> CheckResult:
     """Q12.4 创建同时配置 ingress 和 egress 的 NetworkPolicy"""
+    # 预置 Pod: frontend-pod, backend-pod, database-pod, other-pod
+    preset_pods = """\
+apiVersion: v1
+kind: Pod
+metadata:
+  name: frontend-pod
+  labels:
+    app: frontend
+spec:
+  containers:
+  - name: web
+    image: nginx:1.25
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: backend-pod
+  labels:
+    app: backend
+spec:
+  containers:
+  - name: app
+    image: nginx:1.25
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: database-pod
+  labels:
+    app: database
+spec:
+  containers:
+  - name: db
+    image: postgres:15
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: other-pod
+  labels:
+    app: other
+spec:
+  containers:
+  - name: misc
+    image: nginx:1.25
+"""
     try:
         state = ClusterState()
+        state = preset_state(state, preset_pods)
         state = apply_manifest(state, user_yaml)
     except K8sError as e:
         return CheckResult(ok=False, error=str(e), hints=[])
@@ -716,9 +763,97 @@ def _check_124_ingress_egress(user_yaml: str) -> CheckResult:
             hints=["添加 egress 规则定义出站白名单"],
         )
 
+    # --- simulate_traffic 验证 ---
+    # 尝试从 ingress 规则中提取端口，如果没有端口限制则用 8080
+    test_port = 8080
+    for rule in ingress:
+        if isinstance(rule, dict):
+            ports_list = rule.get("ports")
+            if isinstance(ports_list, list) and ports_list:
+                first_port = ports_list[0]
+                if isinstance(first_port, dict) and "port" in first_port:
+                    test_port = first_port["port"]
+                break
+
+    # 场景1: 检查 from 规则中允许的来源 Pod 能否访问目标 Pod
+    # 找到 from 规则中 podSelector 的 matchLabels
+    allowed_src_label = None
+    for rule in ingress:
+        if not isinstance(rule, dict):
+            continue
+        from_list = rule.get("from")
+        if not isinstance(from_list, list):
+            continue
+        for src in from_list:
+            if not isinstance(src, dict):
+                continue
+            pod_sel = src.get("podSelector")
+            if isinstance(pod_sel, dict) and pod_sel:
+                match_labels = pod_sel.get("matchLabels", {})
+                if isinstance(match_labels, dict) and match_labels:
+                    # 取第一个 label 作为测试依据
+                    allowed_src_label = next(iter(match_labels.items()))
+                    break
+        if allowed_src_label:
+            break
+
+    if allowed_src_label:
+        src_label_key, src_label_val = allowed_src_label
+        # 找到匹配的源 Pod
+        allowed_pod_name = None
+        for pod_name, pod_doc in state.pods.items():
+            if pod_name in ("frontend-pod", "backend-pod", "database-pod", "other-pod"):
+                labels = pod_doc.get("metadata", {}).get("labels", {})
+                if isinstance(labels, dict) and labels.get(src_label_key) == src_label_val:
+                    allowed_pod_name = pod_name
+                    break
+
+        # 找到不匹配的源 Pod
+        denied_pod_name = None
+        for pod_name, pod_doc in state.pods.items():
+            if pod_name in ("frontend-pod", "backend-pod", "database-pod", "other-pod"):
+                labels = pod_doc.get("metadata", {}).get("labels", {})
+                if isinstance(labels, dict) and labels.get(src_label_key) != src_label_val:
+                    denied_pod_name = pod_name
+                    break
+
+        # 找一个被 podSelector 选择的 Pod 作为目标
+        pod_selector = spec.get("podSelector", {})
+        if not isinstance(pod_selector, dict):
+            pod_selector = {}
+        dst_pod_name = None
+        for pod_name, pod_doc in state.pods.items():
+            if pod_name in ("frontend-pod", "backend-pod", "database-pod", "other-pod"):
+                labels = pod_doc.get("metadata", {}).get("labels", {})
+                if not isinstance(labels, dict):
+                    labels = {}
+                from app.simulator import _match_labels
+                if _match_labels(labels, pod_selector):
+                    dst_pod_name = pod_name
+                    break
+
+        if allowed_pod_name and denied_pod_name and dst_pod_name:
+            # 允许的源 -> 目标: 应该 allowed=True
+            result_allow = simulate_traffic(state, allowed_pod_name, dst_pod_name, test_port)
+            if not result_allow["allowed"]:
+                return CheckResult(
+                    ok=False,
+                    error=f"模拟流量验证失败：{allowed_pod_name}（{src_label_key}={src_label_val}）应该能访问 {dst_pod_name}（端口 {test_port}），但被拒绝",
+                    hints=["检查 ingress.from 的 podSelector 是否正确匹配了允许的来源 Pod"],
+                )
+
+            # 不允许的源 -> 目标: 应该 allowed=False
+            result_deny = simulate_traffic(state, denied_pod_name, dst_pod_name, test_port)
+            if result_deny["allowed"]:
+                return CheckResult(
+                    ok=False,
+                    error=f"模拟流量验证失败：{denied_pod_name} 不应该能访问 {dst_pod_name}（端口 {test_port}），但流量被允许",
+                    hints=["检查 ingress.from 规则是否过于宽松，不应允许非白名单 Pod"],
+                )
+
     return CheckResult(
         ok=True, state=state,
-        hints=["入站+出站双向策略创建成功！网络隔离已全面配置 🔒"],
+        hints=["入站+出站双向策略创建成功！模拟流量验证通过 🔒"],
     )
 
 
@@ -912,9 +1047,49 @@ spec:                                        # 规格
 # ==================== Q12.5 集群实战 - 数据库网络隔离 ====================
 
 def _check_125_db_isolation(user_yaml: str) -> CheckResult:
-    """Q12.5 集群实战 - 部署 NetworkPolicy 隔离数据库"""
+    """Q12.5 集群实战 - 部署 NetworkPolicy 隔离数据库
+
+    通过 simulate_traffic 验证流量是否被正确允许/拒绝，
+    解决仅靠结构校验导致的假阳性问题。
+    """
+    # 预置 Pod: backend-pod, database-pod, frontend-pod
+    preset_pods = """\
+apiVersion: v1
+kind: Pod
+metadata:
+  name: backend-pod
+  labels:
+    app: backend
+spec:
+  containers:
+  - name: app
+    image: nginx:1.25
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: database-pod
+  labels:
+    app: database
+spec:
+  containers:
+  - name: db
+    image: postgres:15
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: frontend-pod
+  labels:
+    app: frontend
+spec:
+  containers:
+  - name: web
+    image: nginx:1.25
+"""
     try:
         state = ClusterState()
+        state = preset_state(state, preset_pods)
         state = apply_manifest(state, user_yaml)
     except K8sError as e:
         return CheckResult(ok=False, error=str(e), hints=[])
@@ -986,8 +1161,36 @@ def _check_125_db_isolation(user_yaml: str) -> CheckResult:
             has_ports = True
             break
 
+    # --- simulate_traffic 验证 ---
+    # 场景1: backend-pod -> database-pod:5432 应该允许
+    result_allow = simulate_traffic(state, "backend-pod", "database-pod", 5432)
+    if not result_allow["allowed"]:
+        return CheckResult(
+            ok=False,
+            error="模拟流量验证失败：backend Pod 应该能访问 database Pod（端口 5432），但流量被拒绝。"
+                  "请检查 ingress.from 的 podSelector 是否正确匹配 app: backend",
+            hints=[
+                "确保 ingress.from 中 podSelector.matchLabels 匹配 app: backend",
+                "如果指定了 ports，确保包含 TCP 5432",
+            ],
+        )
+
+    # 场景2: frontend-pod -> database-pod:5432 应该拒绝
+    result_deny = simulate_traffic(state, "frontend-pod", "database-pod", 5432)
+    if result_deny["allowed"]:
+        return CheckResult(
+            ok=False,
+            error="模拟流量验证失败：frontend Pod 不应该能访问 database Pod，但流量被允许。"
+                  "请检查 ingress.from 规则是否过于宽松",
+            hints=[
+                "确保 ingress.from 只允许 app: backend 的 Pod",
+                "不应允许 app: frontend 的 Pod 访问数据库",
+            ],
+        )
+
     hints = [
-        "YAML 校验通过！在真实集群上执行：",
+        "YAML 校验通过！模拟流量验证通过 ✅",
+        "在真实集群上执行：",
         "  kubectl apply -f <your-yaml>",
         "  kubectl get networkpolicy",
         "  kubectl describe networkpolicy <name>",

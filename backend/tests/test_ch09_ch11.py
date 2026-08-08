@@ -378,6 +378,11 @@ class TestQ95SAAuthorization:
 
     def test_correct(self):
         yaml = """
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: my-sa
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -475,6 +480,107 @@ subjects:
     def test_empty_yaml(self):
         r = get_level("Q9.5").check_fn("")
         assert not r.ok
+
+    def test_permission_not_effective_wrong_verb(self):
+        """Role 只有 get 没有 list -> simulate_rbac_check 返回 False -> 假阳性修复"""
+        yaml = """
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: my-sa
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-reader
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pod-reader-binding
+roleRef:
+  kind: Role
+  name: pod-reader
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: my-sa
+  namespace: default
+"""
+        r = get_level("Q9.5").check_fn(yaml)
+        assert not r.ok
+        assert "权限未生效" in r.error
+
+    def test_permission_not_effective_wrong_resource(self):
+        """Role 不包含 pods 资源 -> simulate_rbac_check 返回 False"""
+        yaml = """
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: my-sa
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: svc-reader
+rules:
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: svc-reader-binding
+roleRef:
+  kind: Role
+  name: svc-reader
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: my-sa
+  namespace: default
+"""
+        r = get_level("Q9.5").check_fn(yaml)
+        assert not r.ok
+        assert "权限未生效" in r.error
+
+    def test_wildcard_verb_passes(self):
+        """Role 使用 verbs: ['*'] -> simulate_rbac_check 返回 True"""
+        yaml = """
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: my-sa
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-admin
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pod-admin-binding
+roleRef:
+  kind: Role
+  name: pod-admin
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: my-sa
+  namespace: default
+"""
+        r = get_level("Q9.5").check_fn(yaml)
+        assert r.ok, r.error
 
 
 # ===== Chapter 10: HPA =====
