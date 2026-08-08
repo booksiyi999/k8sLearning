@@ -374,6 +374,36 @@ async def api_cluster_status():
     return CLUSTER_MGR.get_status()
 
 
+# ═══ v2.0 新增: 交互式 Kubectl 终端 ═══
+
+class KubectlRequest(BaseModel):
+    command: str
+    force: bool = False  # 确认执行危险命令
+
+
+@app.post("/api/kubectl")
+async def api_kubectl(req: KubectlRequest):
+    """执行 kubectl 命令（经过安全验证）。
+
+    - 模拟器模式：返回提示信息
+    - 集群模式：执行命令并返回输出
+    - 危险命令（delete/scale/rollout等）需要 force=true
+    """
+    result = await CLUSTER_MGR.kubectl_exec(req.command, force=req.force)
+    return result
+
+
+@app.get("/api/kubectl/whitelist")
+async def api_kubectl_whitelist():
+    """返回允许的 kubectl 子命令列表（供前端自动补全）。"""
+    return {
+        "allowed": sorted(ClusterManager.ALLOWED_SUBCOMMANDS),
+        "dangerous": sorted(ClusterManager.DANGEROUS_SUBCOMMANDS),
+        "namespace": CLUSTER_MGR.namespace,
+        "mode": "cluster" if CLUSTER_MGR.enabled else "simulator",
+    }
+
+
 # 静态前端挂载放在最后，避免吞掉上面的 /api/* 路由。
 if FRONTEND_DIR.exists():
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")

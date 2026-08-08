@@ -369,6 +369,138 @@ class ClusterManager:
         finally:
             self.namespace = original_ns
 
+    # 子命令白名单（允许执行的 kubectl 子命令）
+    ALLOWED_SUBCOMMANDS = frozenset({
+        "get", "describe", "logs", "apply", "delete", "create",
+        "rollout", "scale", "top", "explain", "exec", "wait",
+        "annotate", "label", "patch", "set", "edit",
+        "port-forward", "cp", "auth", "api-resources", "api-versions",
+        "cluster-info", "config", "version", "drain", "cordon", "uncordon",
+        "taint", "rollout",
+    })
+
+    # 危险子命令（需要前端确认）
+    DANGEROUS_SUBCOMMANDS = frozenset({
+        "delete", "drain", "cordon", "uncordon", "taint",
+        "scale", "rollout", "edit",
+    })
+
+    # 禁止的子命令（集群级破坏性操作）
+    FORBIDDEN_SUBCOMMANDS = frozenset({
+        "destroy", "reset", "init",  # kubeadm 级别操作
+    })
+
+    @staticmethod
+    def _validate_kubectl_command(command: str) -> tuple[bool, str, list[str]]:
+        """验证 kubectl 命令安全性。
+
+        Returns:
+            (is_valid, error_message, parsed_args)
+            is_valid=True 时 parsed_args 是要传给 kubectl 的参数列表
+        """
+        command = command.strip()
+        if not command:
+            return False, "命令不能为空", []
+
+        # 去除可能的 "kubectl " 前缀
+        if command.startswith("kubectl "):
+            command = command[8:]
+        elif command == "kubectl":
+            return False, "请输入 kubectl 子命令", []
+
+        # 禁止 shell 元字符（防止注入）
+        dangerous_chars = [";", "|", "&", "`", "$", "(", ")", "<", ">", "\n", "\r"]
+        for ch in dangerous_chars:
+            if ch in command:
+                return False, f"命令包含禁止字符 '{ch}'", []
+
+        # 解析参数
+        import shlex
+        try:
+            args = shlex.split(command)
+        except ValueError as e:
+            return False, f"命令解析失败: {e}", []
+
+        if not args:
+            return False, "命令不能为空", []
+
+        subcommand = args[0].lower()
+
+        # 检查禁止的子命令
+        if subcommand in ClusterManager.FORBIDDEN_SUBCOMMANDS:
+            return False, f"子命令 '{subcommand}' 被禁止（破坏性集群操作）", []
+
+        # 检查白名单
+        if subcommand not in ClusterManager.ALLOWED_SUBCOMMANDS:
+            return False, f"子命令 '{subcommand}' 不在白名单中。允许: {', '.join(sorted(ClusterManager.ALLOWED_SUBCOMMANDS))}", []
+
+        return True, "", args
+
+    async def kubectl_exec(self, command: str, force: bool = False) -> dict:
+        """执行任意 kubectl 命令（经过安全验证）。
+
+        Args:
+            command: kubectl 命令字符串（不含 kubectl 前缀）
+            force: 跳过危险命令确认
+
+        Returns:
+            {
+                "success": bool,
+                "output": str,       # stdout
+                "error": str,        # stderr (if any)
+                "command": str,      # 实际执行的命令
+                "dangerous": bool,   # 是否危险命令
+                "needs_confirm": bool,  # 是否需要确认
+            }
+        """
+        # 先验证命令（无论是否集群模式，都给用户语法反馈）
+        is_valid, error_msg, args = self._validate_kubectl_command(command)
+        if not is_valid:
+            return {
+                "success": False,
+                "output": "",
+                "error": error_msg,
+                "command": command,
+                "dangerous": False,
+                "needs_confirm": False,
+            }
+
+        if not self.enabled:
+            return {
+                "success": False,
+                "output": "",
+                "error": "集群模式未启用。请设置 K8S_QUEST_MODE=cluster 并配置 KUBECONFIG。",
+                "command": command,
+                "dangerous": False,
+                "needs_confirm": False,
+            }
+
+        subcommand = args[0].lower()
+        is_dangerous = subcommand in self.DANGEROUS_SUBCOMMANDS
+
+        if is_dangerous and not force:
+            return {
+                "success": False,
+                "output": "",
+                "error": f"⚠️ 危险命令 '{subcommand}' 需要确认。请使用确认按钮再次执行。",
+                "command": command,
+                "dangerous": True,
+                "needs_confirm": True,
+            }
+
+        # 构建完整命令
+        cmd = self._build_cmd(*args)
+        rc, stdout, stderr = await self._run(cmd)
+
+        return {
+            "success": rc == 0,
+            "output": stdout if stdout else "",
+            "error": stderr if rc != 0 else "",
+            "command": f"kubectl -n {self.namespace} {' '.join(args)}",
+            "dangerous": is_dangerous,
+            "needs_confirm": False,
+        }
+
     def get_status(self) -> dict:
         """返回集群状态信息。
 

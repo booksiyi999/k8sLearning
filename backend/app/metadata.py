@@ -6,6 +6,13 @@
 # ==================== 章节元数据 ====================
 
 CHAPTERS_META = {
+    "ch00": {
+        "title": "K8s 架构总览",
+        "icon": "🏗️",
+        "color": "#6366f1",
+        "description": "零基础起步：控制面/数据面架构、声明式模型、kubectl 全链路",
+        "difficulty": "入门",
+    },
     "ch01": {
         "title": "Pod 基础",
         "icon": "🌱",
@@ -208,10 +215,15 @@ CHAPTERS_META = {
 # 每个关卡关联的 K8s 知识点，用于结业报告的知识掌握度分析
 
 KNOWLEDGE_POINTS = {
+    "Q0.1": ["K8s 架构总览", "控制面组件", "数据面组件", "Node 角色", "多文档 YAML"],
+    "Q0.2": ["声明式模型", "Reconcile 循环", "Deployment 自愈", "期望状态 vs 实际状态"],
+    "Q0.3": ["kubectl 全链路", "API Server 认证/授权/准入", "etcd 持久化", "Service selector 匹配"],
     "Q1.1": ["Pod 概念", "YAML 结构 (apiVersion/kind/metadata/spec)", "containers 定义"],
     "Q1.2": ["Labels 标签", "标签选择器", "key-value 键值对"],
     "Q1.3": ["多容器 Pod", "Sidecar 模式", "Pod 内容器共享网络/存储"],
     "Q1.4": ["资源管理", "resources.requests", "resources.limits"],
+    "Q1.6": ["livenessProbe", "存活探针", "httpGet/tcpSocket/exec", "initialDelaySeconds/periodSeconds/failureThreshold"],
+    "Q1.7": ["readinessProbe", "就绪探针", "liveness+readiness 双探针", "Pod Ready 状态"],
     "Q2.1": ["Deployment 概念", "ReplicaSet", "spec.template 模板"],
     "Q2.2": ["水平扩展", "replicas 字段", "弹性伸缩"],
     "Q2.3": ["滚动更新", "maxSurge/maxUnavailable", "镜像升级策略"],
@@ -375,10 +387,12 @@ KNOWLEDGE_POINTS = {
 
 # ==================== XP 配置 ====================
 
-LEVEL_XP = {f"Q{i}.{j}": 10 for i in range(1, 29) for j in range(1, 6)}
+LEVEL_XP = {f"Q{i}.{j}": 10 for i in range(2, 29) for j in range(1, 6)}
+LEVEL_XP.update({"Q0.1": 10, "Q0.2": 10, "Q0.3": 10})
+LEVEL_XP.update({f"Q1.{j}": 10 for j in range(1, 8)})
 
 # 章节通关奖励
-CHAPTER_BONUS_XP = {f"ch{i:02d}": 50 for i in range(1, 29)}
+CHAPTER_BONUS_XP = {f"ch{i:02d}": 50 for i in range(0, 29)}
 
 # 等级称号 (总XP -> 称号)
 RANKS = [
@@ -413,7 +427,8 @@ def get_next_rank(total_xp: int) -> tuple[str | None, int]:
 # ==================== 知识域分组（结业报告用） ====================
 
 KNOWLEDGE_DOMAINS = {
-    "工作负载管理": ["Q1.1", "Q1.2", "Q1.3", "Q1.4", "Q1.5", "Q2.1", "Q2.2", "Q2.3", "Q2.4", "Q2.5"],
+    "架构基础": ["Q0.1", "Q0.2", "Q0.3"],
+    "工作负载管理": ["Q1.1", "Q1.2", "Q1.3", "Q1.4", "Q1.5", "Q1.6", "Q1.7", "Q2.1", "Q2.2", "Q2.3", "Q2.4", "Q2.5"],
     "网络与服务": ["Q3.1", "Q3.2", "Q3.3", "Q3.4", "Q3.5"],
     "配置与密钥": ["Q4.1", "Q4.2", "Q4.3", "Q4.4", "Q4.5"],
     "存储管理": ["Q5.1", "Q5.2", "Q5.3", "Q5.4", "Q5.5"],

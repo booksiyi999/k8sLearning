@@ -1525,6 +1525,416 @@ body {
   cursor: not-allowed;
 }
 
+/* ==================== 交互式终端 ==================== */
+
+/* 顶栏终端入口链接 */
+.terminal-entry-link {
+  padding: 6px 14px;
+  background: rgba(97, 175, 239, 0.1);
+  color: #61afef;
+  border: 1px solid rgba(97, 175, 239, 0.25);
+  border-radius: var(--radius);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+  transition: var(--transition);
+  white-space: nowrap;
+}
+.terminal-entry-link:hover {
+  background: rgba(97, 175, 239, 0.2);
+  border-color: rgba(97, 175, 239, 0.4);
+}
+
+/* ── 独立终端页面布局 ── */
+.terminal-page-wrap {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: var(--bg-primary);
+}
+.terminal-topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 24px;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border-color);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+}
+.terminal-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.terminal-back-link {
+  color: var(--color-text-dim);
+  text-decoration: none;
+  font-size: 14px;
+  transition: var(--transition);
+}
+.terminal-back-link:hover { color: var(--color-primary); }
+.terminal-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+.terminal-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.terminal-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+  max-width: 1200px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+/* ── 终端容器 ── */
+.terminal-container {
+  background: #1e1e2e;
+  border: 1px solid #313244;
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+}
+.terminal-embedded {
+  max-height: 560px;
+}
+.terminal-container:not(.terminal-embedded) {
+  flex: 1;
+  min-height: 400px;
+}
+
+/* 终端迷你工具栏（嵌入式） */
+.terminal-mini-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 14px;
+  background: #181825;
+  border-bottom: 1px solid #313244;
+}
+
+/* ── 集群状态徽章 ── */
+.terminal-status-badge {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: #cdd6f4;
+  padding: 3px 10px;
+  background: rgba(166, 227, 161, 0.1);
+  border: 1px solid rgba(166, 227, 161, 0.2);
+  border-radius: 12px;
+  white-space: nowrap;
+}
+
+/* ── 清屏按钮 ── */
+.terminal-btn-clear {
+  padding: 4px 12px;
+  background: transparent;
+  color: #bac2de;
+  border: 1px solid #45475a;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: var(--transition);
+}
+.terminal-btn-clear:hover {
+  background: #313244;
+  color: #cdd6f4;
+}
+
+/* ── 输出区域 ── */
+.term-output-area {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 16px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.6;
+  min-height: 200px;
+  max-height: 420px;
+  scroll-behavior: smooth;
+}
+.term-output-area::-webkit-scrollbar {
+  width: 8px;
+}
+.term-output-area::-webkit-scrollbar-track {
+  background: #1e1e2e;
+}
+.term-output-area::-webkit-scrollbar-thumb {
+  background: #45475a;
+  border-radius: 4px;
+}
+.term-output-area::-webkit-scrollbar-thumb:hover {
+  background: #585b70;
+}
+
+/* ── 终端行样式 ── */
+.term-line {
+  white-space: pre-wrap;
+  word-break: break-all;
+  padding: 1px 0;
+}
+.term-line .term-prompt {
+  color: #a6e3a1;   /* 绿色命令提示符 */
+  font-weight: 600;
+  user-select: none;
+}
+.term-line-cmd {
+  color: #cdd6f4;   /* 命令文本: 浅色 */
+}
+.term-line-cmd .term-text {
+  color: #cdd6f4;
+}
+.term-line-out {
+  color: #ffffff;   /* 输出: 白色 */
+}
+.term-line-out .term-text {
+  color: #ffffff;
+}
+.term-line-err {
+  color: #f38ba8;   /* 错误: 红色 */
+}
+.term-line-err .term-text {
+  color: #f38ba8;
+}
+.term-line-sys {
+  color: #f9e2af;   /* 系统消息: 黄色 */
+}
+.term-line-sys .term-text {
+  color: #f9e2af;
+}
+.term-text {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* ── 加载中指示器 ── */
+.term-loading-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  color: #89b4fa;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.term-loading-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #89b4fa;
+  animation: term-pulse 1s ease-in-out infinite;
+}
+@keyframes term-pulse {
+  0%, 100% { opacity: 0.3; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+.term-loading-text {
+  font-size: 12px;
+}
+
+/* ── 自动补全建议 ── */
+.term-suggest-dropdown {
+  position: relative;
+  background: #181825;
+  border-top: 1px solid #313244;
+  border-bottom: 1px solid #313244;
+  padding: 6px 16px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+.term-suggest-item {
+  padding: 4px 12px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: #bac2de;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: var(--transition);
+}
+.term-suggest-item:hover,
+.term-suggest-active {
+  background: #313244;
+  color: #a6e3a1;
+}
+
+/* ── 确认执行区 ── */
+.term-confirm-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: rgba(243, 139, 168, 0.08);
+  border-top: 1px solid rgba(243, 139, 168, 0.2);
+  border-bottom: 1px solid rgba(243, 139, 168, 0.2);
+  flex-wrap: wrap;
+}
+.term-confirm-text {
+  font-size: 13px;
+  color: #f9e2af;
+  flex: 1;
+  min-width: 200px;
+}
+.term-confirm-text code {
+  font-family: var(--font-mono);
+  background: #313244;
+  padding: 2px 8px;
+  border-radius: 4px;
+  color: #f38ba8;
+  font-size: 12px;
+}
+.term-btn-confirm {
+  padding: 6px 16px;
+  background: #a6e3a1;
+  color: #1e1e2e;
+  border: none;
+  border-radius: 4px;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  transition: var(--transition);
+}
+.term-btn-confirm:hover:not(:disabled) {
+  background: #94d68f;
+  transform: translateY(-1px);
+}
+.term-btn-confirm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.term-btn-cancel {
+  padding: 6px 16px;
+  background: transparent;
+  color: #f38ba8;
+  border: 1px solid #f38ba8;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: var(--transition);
+}
+.term-btn-cancel:hover {
+  background: rgba(243, 139, 168, 0.15);
+}
+
+/* ── 输入行 ── */
+.term-input-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: #181825;
+  border-top: 1px solid #313244;
+}
+.term-input-line .term-prompt {
+  color: #a6e3a1;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 600;
+  user-select: none;
+  flex-shrink: 0;
+}
+.term-input-field {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #cdd6f4;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  caret-color: #a6e3a1;
+}
+.term-input-field::placeholder {
+  color: #585b70;
+}
+.term-input-field:disabled {
+  opacity: 0.5;
+}
+
+/* ── 模拟器模式警告 ── */
+.terminal-mode-warning {
+  text-align: center;
+  padding: 40px 20px;
+  background: var(--bg-input);
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius);
+}
+.terminal-mode-warning .warning-icon {
+  font-size: 48px;
+  margin-bottom: 12px;
+}
+.terminal-mode-warning h3 {
+  font-size: 18px;
+  color: #f9e2af;
+  margin-bottom: 10px;
+}
+.terminal-mode-warning p {
+  color: var(--color-text-dim);
+  font-size: 14px;
+  margin: 6px 0;
+}
+.terminal-mode-warning code {
+  font-family: var(--font-mono);
+  background: var(--bg-card);
+  padding: 2px 8px;
+  border-radius: 4px;
+  color: #a6e3a1;
+  font-size: 13px;
+}
+.terminal-mode-warning .warning-sub {
+  font-size: 12px !important;
+  color: var(--color-text-muted);
+  margin-top: 10px;
+}
+
+/* ── 嵌入式终端面板 ── */
+.terminal-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* ── 快捷命令栏 ── */
+.terminal-quick-cmds {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 12px 0;
+  max-width: 1200px;
+  width: 100%;
+  margin: 0 auto;
+  padding-left: 20px;
+  padding-right: 20px;
+}
+.quick-cmd-label {
+  font-size: 13px;
+  color: var(--color-text-dim);
+  font-weight: 600;
+}
+.quick-cmd-btn {
+  padding: 5px 12px;
+  background: var(--bg-card);
+  color: #bac2de;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  transition: var(--transition);
+}
+.quick-cmd-btn:hover {
+  background: var(--bg-card-hover);
+  border-color: #a6e3a1;
+  color: #a6e3a1;
+}
+
 /* ==================== 响应式 ==================== */
 @media (max-width: 1200px) {
   .main-grid {

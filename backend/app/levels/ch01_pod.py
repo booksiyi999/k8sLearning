@@ -1,4 +1,4 @@
-"""Chapter 1: Pod 基础（4 关）"""
+"""Chapter 1: Pod 基础（6 关 + 1 集群实战 = 7 关）"""
 from app.validator import Level, CheckResult, Lesson
 from app.simulator import apply_manifest, ClusterState, K8sError
 
@@ -768,6 +768,553 @@ spec:                             # 规格定义
 )
 
 
+# ==================== Q1.6 Pod 健康检查 - livenessProbe ====================
+
+def _check_06_liveness_probe(user_yaml: str) -> CheckResult:
+    """Q1.6 Pod 健康检查 - livenessProbe"""
+    try:
+        state = ClusterState()
+        state = apply_manifest(state, user_yaml)
+    except K8sError as e:
+        return CheckResult(ok=False, error=str(e), hints=[])
+
+    if "probe-pod" not in state.pods:
+        return CheckResult(
+            ok=False,
+            error="没找到名为 'probe-pod' 的 Pod",
+            hints=["Pod 的名字应该是 probe-pod"],
+        )
+
+    pod = state.pods["probe-pod"]
+    containers = pod.get("spec", {}).get("containers", [])
+    if not containers:
+        return CheckResult(ok=False, error="Pod 缺少 containers", hints=[])
+
+    c = containers[0]
+    liveness = c.get("livenessProbe")
+    if not isinstance(liveness, dict):
+        # 类型守卫：livenessProbe 可能是字符串/列表等非 dict 类型，
+        # falsy-only 判断会被 truthy 非 dict 绕过，随后 .get() 抛 AttributeError。
+        return CheckResult(
+            ok=False,
+            error="容器缺少 livenessProbe（需要配置健康检查探针）",
+            hints=["livenessProbe 写在 spec.containers[0].livenessProbe 下"],
+        )
+
+    # 检查探针类型：httpGet / tcpSocket / exec 三选一
+    probe_types = []
+    for pt in ("httpGet", "tcpSocket", "exec"):
+        if isinstance(liveness.get(pt), dict):
+            probe_types.append(pt)
+
+    if not probe_types:
+        return CheckResult(
+            ok=False,
+            error="livenessProbe 缺少探针类型（需要 httpGet、tcpSocket 或 exec 之一）",
+            hints=[
+                "httpGet: 发 HTTP GET 请求，如 httpGet: {path: /, port: 80}",
+                "tcpSocket: 检查 TCP 端口，如 tcpSocket: {port: 80}",
+                "exec: 执行命令，如 exec: {command: [/bin/sh, -c, 'echo ok']}",
+            ],
+        )
+
+    if len(probe_types) > 1:
+        return CheckResult(
+            ok=False,
+            error=f"livenessProbe 只能有一种探针类型，实际有 {len(probe_types)} 种：{probe_types}",
+            hints=["httpGet / tcpSocket / exec 三选一，不能同时配置多个"],
+        )
+
+    return CheckResult(
+        ok=True, state=state,
+        hints=[
+            f"太棒了！livenessProbe 配置了 {probe_types[0]} 类型探针 🩺",
+            "livenessProbe 失败时 K8s 会自动重启容器",
+        ],
+    )
+
+
+LEVEL_Q1_6 = Level(
+    id="Q1.6",
+    chapter="ch01",
+    title="Pod 健康检查 - livenessProbe",
+    description="""\
+# Pod 健康检查 - livenessProbe 🩺
+
+K8s 通过 **探针（Probe）** 来检查容器的健康状态。**livenessProbe**（存活探针）用于检测容器是否还活着——如果探针失败，K8s 会**自动重启**容器。
+
+## 要求
+
+创建一个 Pod：
+- 名字 `probe-pod`
+- 镜像 `nginx:1.25`
+- 为容器配置 **livenessProbe**，使用以下三种探针类型之一：
+  - `httpGet`：HTTP GET 请求（最常用）
+  - `tcpSocket`：TCP 端口检查
+  - `exec`：执行命令检查
+
+## 提示
+
+livenessProbe 写在 `spec.containers[0].livenessProbe` 下：
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /
+    port: 80
+  initialDelaySeconds: 5
+  periodSeconds: 10
+```
+
+> 💡 三种探针类型**只能选一种**，不能同时配置多个。
+""",
+    starter_yaml="""\
+apiVersion: v1
+kind: Pod
+metadata:
+  name: probe-pod
+spec:
+  containers:
+    - name: nginx
+      image: nginx:1.25
+      ports:
+        - containerPort: 80
+      # 在这里配置 livenessProbe
+""",
+    check_fn=_check_06_liveness_probe,
+    lesson=Lesson(
+        concept="""\
+## K8s 探针（Probe）体系
+
+Kubernetes 提供三种探针来管理容器的健康状态和生命周期：
+
+### 三种探针类型
+
+| 探针 | 作用 | 失败后果 |
+|------|------|----------|
+| **livenessProbe**（存活探针） | 检测容器是否"活着" | **重启容器** |
+| **readinessProbe**（就绪探针） | 检测容器是否"准备好接收流量" | **从 Service Endpoints 移除**（不重启） |
+| **startupProbe**（启动探针） | 检测容器是否已完成启动 | 在启动成功前**禁用 liveness/readiness** |
+
+### 探针的检测方式（Handler）
+
+每种探针都支持三种检测方式：
+
+1. **httpGet** - 对容器指定端口和路径发起 HTTP GET 请求
+   - 返回 200-399 视为成功
+   - 最适合 Web 服务
+
+2. **tcpSocket** - 对容器指定端口发起 TCP 连接
+   - 连接建立视为成功
+   - 适合非 HTTP 服务（如数据库）
+
+3. **exec** - 在容器内执行指定命令
+   - 退出码 0 视为成功
+   - 最灵活，可自定义检查逻辑
+
+### 探针工作原理
+
+```
+容器启动
+  │
+  ├─→ [startupProbe]  启动期间检查（如果配置了）
+  │     成功 → 启用 liveness/readiness
+  │     失败 → 重启容器
+  │
+  ├─→ [readinessProbe]  就绪检查（持续）
+  │     成功 → Pod Ready=true, 加入 Service Endpoints
+  │     失败 → Pod Ready=false, 从 Endpoints 移除
+  │
+  └─→ [livenessProbe]  存活检查（持续）
+        成功 → 继续运行
+        失败 → 重启容器（restartPolicy 机制）
+```
+
+### 为什么要用 livenessProbe？
+
+- 容器进程可能"假死"（如死锁、内存泄漏不崩溃）——进程还在但无法服务
+- livenessProbe 能检测这种状态并自动重启
+- 没有 livenessProbe 时，K8s 只能靠进程退出码判断容器状态
+""",
+        key_fields=[
+            {"name": "spec.containers[].livenessProbe", "description": "存活探针配置块", "required": True, "example": "{httpGet: {path: /, port: 80}}"},
+            {"name": "livenessProbe.httpGet", "description": "HTTP GET 探针，检查 HTTP 响应码 200-399", "required": False, "example": "{path: /healthz, port: 8080}"},
+            {"name": "livenessProbe.tcpSocket", "description": "TCP 探针，检查端口是否可连接", "required": False, "example": "{port: 3306}"},
+            {"name": "livenessProbe.exec", "description": "命令探针，执行命令检查退出码", "required": False, "example": "{command: [/bin/sh, -c, 'pgrep nginx']}"},
+            {"name": "livenessProbe.initialDelaySeconds", "description": "容器启动后等待多少秒再开始探测", "required": False, "example": "5"},
+            {"name": "livenessProbe.periodSeconds", "description": "探测间隔（秒），默认 10", "required": False, "example": "10"},
+            {"name": "livenessProbe.failureThreshold", "description": "连续失败多少次才判定为失败，默认 3", "required": False, "example": "3"},
+            {"name": "livenessProbe.timeoutSeconds", "description": "探测超时时间（秒），默认 1", "required": False, "example": "1"},
+            {"name": "livenessProbe.successThreshold", "description": "连续成功多少次才判定为成功，默认 1", "required": False, "example": "1"},
+        ],
+        diagram="""\
+┌─────────── Pod (probe-pod) ──────────────────────┐
+│  Container: nginx (nginx:1.25)                    │
+│                                                   │
+│  ┌───────────── livenessProbe ─────────────────┐ │
+│  │                                              │ │
+│  │  initialDelaySeconds: 5  (启动后等 5 秒)     │ │
+│  │  periodSeconds: 10       (每 10 秒检查一次)   │ │
+│  │  failureThreshold: 3     (连续失败 3 次才触发)│ │
+│  │                                              │ │
+│  │  ┌────────────────────────────────────────┐ │ │
+│  │  │  httpGet: {path: /, port: 80}          │ │ │
+│  │  │  → 发 HTTP GET 到容器 80 端口的 / 路径  │ │ │
+│  │  │  → 返回 200-399 = 成功                  │ │ │
+│  │  │  → 返回其他码 = 失败                    │ │ │
+│  │  └────────────────────────────────────────┘ │ │
+│  └──────────────────────────────────────────────┘ │
+│                                                   │
+│  探针失败时：                                      │
+│  failureThreshold 次 → kubelet 重启容器            │
+└───────────────────────────────────────────────────┘
+
+时间线：
+启动 → [等 5s] → 检查 → OK → [等 10s] → 检查 → OK → ...
+                          ↓ (如果失败)
+                   [等 10s] → 检查 → 失败 → [等 10s] → 检查 → 失败 → 重启！
+                   (第1次)               (第2次)              (第3次=threshold)
+""",
+        example_yaml="""\
+apiVersion: v1                    # K8s API 版本
+kind: Pod                         # 资源类型: Pod
+metadata:                         # 元数据
+  name: probe-pod                 # Pod 名称
+spec:                             # 规格定义
+  containers:                     # 容器列表
+  - name: nginx                   # 容器名
+    image: nginx:1.25             # 镜像
+    ports:                        # 端口
+    - containerPort: 80
+    livenessProbe:                # 存活探针
+      httpGet:                    # HTTP GET 检测方式
+        path: /                   # 检查路径
+        port: 80                  # 检查端口
+      initialDelaySeconds: 5      # 启动后等待 5 秒再开始检测
+      periodSeconds: 10           # 每 10 秒检测一次
+      failureThreshold: 3         # 连续失败 3 次才重启
+      timeoutSeconds: 1           # 超时 1 秒
+""",
+        common_errors=[
+            "同时配置了 httpGet、tcpSocket、exec 多种探针类型（只能选一种）",
+            "initialDelaySeconds 设得太短，容器还没启动就开始探测导致失败重启",
+            "httpGet 的 path 或 port 写错，导致探测始终失败形成 CrashLoopBackOff",
+            "把 livenessProbe 写在了 spec 下而不是 spec.containers 下",
+            "livenessProbe 和 readinessProbe 混淆（liveness 失败会重启，readiness 失败只是摘流）",
+        ],
+        tips=[
+            "livenessProbe 用于检测假死状态，不是用来检测服务是否就绪",
+            "initialDelaySeconds 要大于容器启动时间，否则会在启动期间被误判为不健康",
+            "用 kubectl describe pod <name> 查看 Events 中的探针失败记录",
+            "生产环境建议 httpGet 指向 /healthz 等专用健康检查端点",
+        ],
+    ),
+)
+
+
+# ==================== Q1.7 探针实战 - liveness + readiness ====================
+
+def _check_07_dual_probes(user_yaml: str) -> CheckResult:
+    """Q1.7 探针实战 - 配置 liveness + readiness 双探针"""
+    try:
+        state = ClusterState()
+        state = apply_manifest(state, user_yaml)
+    except K8sError as e:
+        return CheckResult(ok=False, error=str(e), hints=[])
+
+    if "health-pod" not in state.pods:
+        return CheckResult(
+            ok=False,
+            error="没找到名为 'health-pod' 的 Pod",
+            hints=["Pod 的名字应该是 health-pod"],
+        )
+
+    pod = state.pods["health-pod"]
+    containers = pod.get("spec", {}).get("containers", [])
+    if not containers:
+        return CheckResult(ok=False, error="Pod 缺少 containers", hints=[])
+
+    c = containers[0]
+
+    # 检查 livenessProbe
+    liveness = c.get("livenessProbe")
+    if not isinstance(liveness, dict):
+        return CheckResult(
+            ok=False,
+            error="容器缺少 livenessProbe（存活探针，失败会重启容器）",
+            hints=["在 spec.containers[0] 下添加 livenessProbe"],
+        )
+
+    # 检查 readinessProbe
+    readiness = c.get("readinessProbe")
+    if not isinstance(readiness, dict):
+        return CheckResult(
+            ok=False,
+            error="容器缺少 readinessProbe（就绪探针，失败会从 Service 摘除流量）",
+            hints=["在 spec.containers[0] 下添加 readinessProbe"],
+        )
+
+    # 验证 livenessProbe 有有效的探针类型
+    liveness_ok = any(
+        isinstance(liveness.get(pt), dict)
+        for pt in ("httpGet", "tcpSocket", "exec")
+    )
+    if not liveness_ok:
+        return CheckResult(
+            ok=False,
+            error="livenessProbe 缺少探针类型（需要 httpGet、tcpSocket 或 exec 之一）",
+            hints=["在 livenessProbe 下添加 httpGet / tcpSocket / exec"],
+        )
+
+    # 验证 readinessProbe 有有效的探针类型
+    readiness_ok = any(
+        isinstance(readiness.get(pt), dict)
+        for pt in ("httpGet", "tcpSocket", "exec")
+    )
+    if not readiness_ok:
+        return CheckResult(
+            ok=False,
+            error="readinessProbe 缺少探针类型（需要 httpGet、tcpSocket 或 exec 之一）",
+            hints=["在 readinessProbe 下添加 httpGet / tcpSocket / exec"],
+        )
+
+    return CheckResult(
+        ok=True, state=state,
+        hints=[
+            "完美！双探针配置是生产环境的最佳实践 🎯",
+            "livenessProbe 失败 → 重启容器；readinessProbe 失败 → 摘除流量",
+        ],
+    )
+
+
+LEVEL_Q1_7 = Level(
+    id="Q1.7",
+    chapter="ch01",
+    title="探针实战 - liveness + readiness",
+    description="""\
+# 探针实战 - liveness + readiness 🎯
+
+生产环境中，通常需要**同时配置** livenessProbe 和 readinessProbe：
+
+- **livenessProbe**：容器"假死"时自动重启
+- **readinessProbe**：容器未就绪时不接收流量
+
+两者配合，实现"优雅启动 + 自愈"的生产级 Pod。
+
+## 要求
+
+创建一个 Pod：
+- 名字 `health-pod`
+- 镜像 `nginx:1.25`
+- 同时配置 **livenessProbe** 和 **readinessProbe**
+- 两个探针都使用 httpGet / tcpSocket / exec 之一
+
+## 提示
+
+```yaml
+containers:
+  - name: nginx
+    image: nginx:1.25
+    livenessProbe:
+      httpGet:
+        path: /
+        port: 80
+    readinessProbe:
+      httpGet:
+        path: /
+        port: 80
+```
+
+> 💡 典型实践：readinessProbe 的 path 用 `/ready`（应用完全就绪），
+> livenessProbe 的 path 用 `/health`（基本存活检查）。
+""",
+    starter_yaml="""\
+apiVersion: v1
+kind: Pod
+metadata:
+  name: health-pod
+spec:
+  containers:
+    - name: nginx
+      image: nginx:1.25
+      ports:
+        - containerPort: 80
+      # 在这里同时配置 livenessProbe 和 readinessProbe
+""",
+    check_fn=_check_07_dual_probes,
+    lesson=Lesson(
+        concept="""\
+## livenessProbe + readinessProbe 双探针实战
+
+在生产环境中，单独使用 livenessProbe 是不够的。最佳实践是**同时配置 livenessProbe 和 readinessProbe**，它们各司其职。
+
+### livenessProbe vs readinessProbe 对比
+
+| 特性 | livenessProbe | readinessProbe |
+|------|---------------|----------------|
+| 检测内容 | 容器是否"活着" | 容器是否"准备好服务" |
+| 失败后果 | **重启容器** | **从 Endpoints 摘除**（不重启） |
+| 影响 Pod Ready | 不直接影响 | 直接影响（Ready=false） |
+| 影响 Service 流量 | 不直接影响 | 直接影响（流量停止转发） |
+| 典型场景 | 检测死锁、假死 | 等待依赖就绪、优雅摘流 |
+
+### 为什么需要两个探针？
+
+**场景 1：应用启动慢**
+
+应用需要 30 秒加载配置、连接数据库。如果只有 livenessProbe：
+- 探针在启动期间持续失败 → 容器被重启 → 永远无法启动 → CrashLoopBackOff
+
+加上 readinessProbe：
+- 启动期间 readinessProbe 失败 → Pod Ready=false → 不接收流量
+- 但 livenessProbe 不会重启（设好 initialDelaySeconds 或用 startupProbe）
+- 启动完成后 readinessProbe 成功 → Pod Ready=true → 开始接收流量
+
+**场景 2：依赖服务故障**
+
+数据库临时不可用：
+- readinessProbe 失败 → Pod 从 Endpoints 移除 → 流量转发到其他 Pod
+- livenessProbe 仍成功（容器进程没死） → 不重启
+- 数据库恢复后 → readinessProbe 成功 → Pod 重新加入 Endpoints
+
+### startupProbe 的角色
+
+对于启动特别慢的应用（如 Java Spring Boot），还可以加 startupProbe：
+- startupProbe 成功前，liveness/readiness 都不生效
+- 避免设置过大的 initialDelaySeconds 影响故障检测速度
+
+### 探针配置最佳实践
+
+```
+livenessProbe:
+  httpGet:
+    path: /health      # 存活检查（轻量级）
+    port: 8080
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /ready       # 就绪检查（检查依赖）
+    port: 8080
+  initialDelaySeconds: 3
+  periodSeconds: 5
+  failureThreshold: 1  # 就绪检查更严格，失败 1 次就摘流
+```
+
+### Pod Ready 状态与探针的关系
+
+Pod 的 Ready 条件由 readinessProbe 决定：
+- readinessProbe 通过 → `Pod.status.conditions[Ready] = True`
+- readinessProbe 失败 → `Pod.status.conditions[Ready] = False`
+- Service 的 Endpoints 只包含 Ready=True 的 Pod
+
+这意味着：**readinessProbe 直接控制流量是否到达 Pod**。
+""",
+        key_fields=[
+            {"name": "spec.containers[].livenessProbe", "description": "存活探针，失败时重启容器", "required": True, "example": "{httpGet: {path: /health, port: 80}}"},
+            {"name": "spec.containers[].readinessProbe", "description": "就绪探针，失败时从 Service Endpoints 摘除", "required": True, "example": "{httpGet: {path: /ready, port: 80}}"},
+            {"name": "spec.containers[].startupProbe", "description": "启动探针，成功前禁用 liveness/readiness（慢启动应用用）", "required": False, "example": "{httpGet: {path: /started, port: 80}}"},
+            {"name": "probe.initialDelaySeconds", "description": "容器启动后等待多少秒再开始探测", "required": False, "example": "5"},
+            {"name": "probe.periodSeconds", "description": "探测间隔（秒），默认 10", "required": False, "example": "10"},
+            {"name": "probe.failureThreshold", "description": "连续失败次数阈值，默认 3", "required": False, "example": "3"},
+            {"name": "probe.timeoutSeconds", "description": "探测超时时间（秒），默认 1", "required": False, "example": "1"},
+        ],
+        diagram="""\
+┌──────────── Pod (health-pod) ─────────────────────────┐
+│  Container: nginx (nginx:1.25)                         │
+│                                                        │
+│  ┌──── livenessProbe ────┐  ┌─── readinessProbe ───┐  │
+│  │  httpGet: /health:80   │  │  httpGet: /ready:80   │  │
+│  │  period: 10s           │  │  period: 5s           │  │
+│  │  failureThreshold: 3   │  │  failureThreshold: 1  │  │
+│  └────────┬───────────────┘  └──────────┬────────────┘  │
+│           │                            │                │
+│           ▼                            ▼                │
+│  ┌─────────────────┐          ┌──────────────────────┐ │
+│  │ 失败 3 次       │          │ 失败 1 次            │ │
+│  │ → 重启容器      │          │ → Pod Ready=false    │ │
+│  │   (kill + 重建) │          │ → 从 Endpoints 移除  │ │
+│  └─────────────────┘          │ → 流量不再到达       │ │
+│                               └──────────────────────┘ │
+│                                                        │
+│  Service Endpoints:                                    │
+│  ┌──────────────────────────────────────────────────┐  │
+│  │  只有 readinessProbe 通过的 Pod 才在 Endpoints 中 │  │
+│  └──────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────┘
+
+时间线（双探针协同）：
+──────────────────────────────────────────────────────
+容器启动
+  │
+  │  readinessProbe 失败 (应用未就绪)
+  │  livenessProbe 失败 (initialDelaySeconds 内)
+  │  → Pod Ready=false, 不接收流量, 但不重启
+  │
+  │  readinessProbe 成功
+  │  → Pod Ready=true, 开始接收流量
+  │
+  │  [正常运行中]
+  │  liveness ✓  readiness ✓  → 正常服务
+  │
+  │  依赖故障: readinessProbe 失败
+  │  liveness ✓ (进程没死)
+  │  → Pod Ready=false, 流量摘除, 不重启
+  │
+  │  依赖恢复: readinessProbe 成功
+  │  → Pod Ready=true, 流量恢复
+  │
+  │  容器假死: livenessProbe 连续失败 3 次
+  │  → 重启容器 (kill + 重新创建)
+──────────────────────────────────────────────────────
+""",
+        example_yaml="""\
+apiVersion: v1                    # K8s API 版本
+kind: Pod                         # 资源类型: Pod
+metadata:                         # 元数据
+  name: health-pod                # Pod 名称
+spec:                             # 规格定义
+  containers:                     # 容器列表
+  - name: nginx                   # 容器名
+    image: nginx:1.25             # 镜像
+    ports:                        # 端口
+    - containerPort: 80
+    livenessProbe:                # 存活探针（失败→重启）
+      httpGet:                    # HTTP GET 方式
+        path: /                   # 检查路径
+        port: 80                  # 检查端口
+      initialDelaySeconds: 5      # 启动后等 5 秒
+      periodSeconds: 10           # 每 10 秒检查
+      failureThreshold: 3         # 连续失败 3 次才重启
+    readinessProbe:               # 就绪探针（失败→摘流）
+      httpGet:                    # HTTP GET 方式
+        path: /                   # 检查路径
+        port: 80                  # 检查端口
+      initialDelaySeconds: 3      # 启动后等 3 秒
+      periodSeconds: 5            # 每 5 秒检查（比 liveness 更频繁）
+      failureThreshold: 1         # 失败 1 次就摘流（更严格）
+""",
+        common_errors=[
+            "只有 livenessProbe 没有 readinessProbe——启动期间流量会到达未就绪的 Pod",
+            "只有 readinessProbe 没有 livenessProbe——容器假死时无法自动重启",
+            "两个探针使用相同的 failureThreshold——readinessProbe 应该更严格（failureThreshold=1）",
+            "readinessProbe 和 livenessProbe 检查同一个端点，没有区分存活和就绪语义",
+            "忘记设置 initialDelaySeconds，导致应用启动期间探针误判失败",
+        ],
+        tips=[
+            "生产环境最佳实践：livenessProbe + readinessProbe 双探针",
+            "readinessProbe 的 failureThreshold 设为 1，失败立即摘流；livenessProbe 设为 3，避免误重启",
+            "readinessProbe 可以检查依赖服务（如数据库连接），livenessProbe 只检查容器自身",
+            "用 kubectl get pods -o wide 查看 READY 列（如 1/1 表示就绪）",
+            "用 kubectl describe pod <name> 查看 Conditions 中的 Ready 状态",
+            "慢启动应用（如 Java）考虑使用 startupProbe 代替过大的 initialDelaySeconds",
+        ],
+    ),
+)
+
+
 # ==================== Chapter 1 关卡汇总 ====================
 
-CHAPTER_1_LEVELS = [LEVEL_Q1_1, LEVEL_Q1_2, LEVEL_Q1_3, LEVEL_Q1_4]
+CHAPTER_1_LEVELS = [LEVEL_Q1_1, LEVEL_Q1_2, LEVEL_Q1_3, LEVEL_Q1_4, LEVEL_Q1_6, LEVEL_Q1_7]

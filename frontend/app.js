@@ -5,6 +5,8 @@
 
 function quest() {
   return {
+    ...terminalMixin(),
+
     // ── 核心数据 ──
     levels: [],
     currentLevel: null,
@@ -119,6 +121,10 @@ function quest() {
       this.activeTab = tab;
       if (tab === 'lesson' && !this.lesson && this.currentLevel) {
         await this.loadLesson(this.currentLevel.id);
+      }
+      if (tab === 'terminal') {
+        await this.termInit();
+        this.termFocusInput();
       }
       if (tab === 'cluster' && this.clusterMode) {
         await this.loadClusterResources();

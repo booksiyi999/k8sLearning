@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>🖥️ K8s Quest 终端</title>
+  <link rel="stylesheet" href="styles.css">
+  <!-- Alpine.js: 响应式框架（本地化，不依赖外网 CDN） -->
+  <script src="vendor/alpine.min.js" defer></script>
+</head>
+<body>
+<!-- ============ 独立终端页面 ============ -->
+<div x-data="terminalPage()" x-init="init()" class="terminal-page-wrap">
+
+  <!-- ==================== 终端顶栏 ==================== -->
+  <header class="terminal-topbar">
+    <div class="terminal-topbar-left">
+      <a href="/index.html" class="terminal-back-link">← 返回主界面</a>
+      <span class="terminal-title">🖥️ Kubectl 终端</span>
+    </div>
+    <div class="terminal-topbar-right">
+      <span class="terminal-status-badge" x-text="termStatusText"></span>
+      <button class="terminal-btn-clear" @click="termClear()">🧹 清屏</button>
+    </div>
+  </header>
+
+  <!-- ==================== 终端主体 ==================== -->
+  <div class="terminal-body">
+
+    <!-- 模拟器模式提示 -->
+    <template x-if="!termClusterMode">
+      <div class="terminal-mode-warning">
+        <div class="warning-icon">🟡</div>
+        <h3>当前为模拟器模式</h3>
+        <p>如需使用终端请配置 <code>K8S_QUEST_MODE=cluster</code></p>
+        <p class="warning-sub">配置后重启服务即可在此执行真实 kubectl 命令。</p>
+      </div>
+    </template>
+
+    <!-- 集群模式: 完整终端 -->
+    <template x-if="termClusterMode">
+      <div class="terminal-container">
+
+        <!-- 输出区域 -->
+        <div class="term-output-area" id="term-output-standalone" @click="termFocusInput()">
+          <template x-for="(line, i) in termOutput" :key="i">
+            <div class="term-line" :class="'term-line-' + line.type">
+              <template x-if="line.type === 'cmd'">
+                <span class="term-prompt">kubectl❯&nbsp;</span>
+              </template>
+              <span class="term-text" x-text="line.text"></span>
+            </div>
+          </template>
+
+          <!-- 加载中指示器 -->
+          <template x-if="termLoading">
+            <div class="term-loading-line">
+              <span class="term-loading-dot"></span>
+              <span class="term-loading-text">执行中...</span>
+            </div>
+          </template>
+        </div>
+
+        <!-- 自动补全建议 -->
+        <template x-if="termShowSuggest && termSuggestions.length > 0 && !termLoading">
+          <div class="term-suggest-dropdown">
+            <template x-for="(s, i) in termSuggestions" :key="s">
+              <div class="term-suggest-item"
+                   :class="{ 'term-suggest-active': i === 0 }"
+                   @click="termPickSuggestion(s)"
+                   x-text="s"></div>
+            </template>
+          </div>
+        </template>
+
+        <!-- 确认执行区 -->
+        <template x-if="termConfirmCmd">
+          <div class="term-confirm-bar">
+            <span class="term-confirm-text">
+              ⚠️ 确认执行危险命令: <code x-text="termConfirmCmd"></code>
+            </span>
+            <button class="term-btn-confirm" @click="termConfirmRun()" :disabled="termLoading">
+              ✅ 确认执行
+            </button>
+            <button class="term-btn-cancel" @click="termCancelConfirm()">✕ 取消</button>
+          </div>
+        </template>
+
+        <!-- 输入行 -->
+        <div class="term-input-line">
+          <span class="term-prompt">kubectl❯</span>
+          <input type="text"
+                 x-model="termInput"
+                 @keydown="termOnKeydown($event)"
+                 @input="termShowSuggest = true"
+                 @focus="termShowSuggest = true"
+                 class="term-input-field"
+                 :disabled="termLoading"
+                 placeholder="输入 kubectl 命令... (如: kubectl get pods)"
+                 spellcheck="false"
+                 autocomplete="off"
+                 autocapitalize="off" />
+        </div>
+
+      </div>
+    </template>
+  </div>
+
+  <!-- ==================== 快捷命令 ==================== -->
+  <template x-if="termClusterMode">
+    <div class="terminal-quick-cmds">
+      <span class="quick-cmd-label">快捷命令:</span>
+      <button class="quick-cmd-btn" @click="termInput = 'kubectl get pods'; termRun()">📦 get pods</button>
+      <button class="quick-cmd-btn" @click="termInput = 'kubectl get svc'; termRun()">🔗 get svc</button>
+      <button class="quick-cmd-btn" @click="termInput = 'kubectl get deployments'; termRun()">🚀 get deploy</button>
+      <button class="quick-cmd-btn" @click="termInput = 'kubectl get nodes'; termRun()">💻 get nodes</button>
+      <button class="quick-cmd-btn" @click="termInput = 'kubectl get ns'; termRun()">📂 get ns</button>
+      <button class="quick-cmd-btn" @click="termInput = 'kubectl describe pods'; termRun()">📋 describe pods</button>
+    </div>
+  </template>
+
+</div>
+
+<script src="terminal.js"></script>
+</body>
+</html>

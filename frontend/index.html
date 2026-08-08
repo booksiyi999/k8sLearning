@@ -11,6 +11,8 @@
   <script src="vendor/marked.min.js"></script>
   <!-- canvas-confetti: 庆祝纸屑特效（本地化） -->
   <script src="vendor/confetti.browser.min.js"></script>
+  <!-- terminal.js: 交互式终端组件（终端 mixin） -->
+  <script src="terminal.js"></script>
 </head>
 <body>
 <!-- ============ Alpine 根组件 ============ -->
@@ -44,6 +46,9 @@
         <span class="streak-max" x-text="'最高 x' + progress.max_streak"></span>
       </template>
     </div>
+
+    <!-- 终端入口 -->
+    <a href="/terminal.html" class="terminal-entry-link" title="打开独立终端页面">🖥️ 终端</a>
   </header>
 
   <!-- ==================== 主区域: 三栏布局 ==================== -->
@@ -120,6 +125,7 @@
           <div class="tab-nav">
             <button class="tab-btn" :class="{active: activeTab==='lesson'}" @click="switchTab('lesson')">📖 知识讲解</button>
             <button class="tab-btn" :class="{active: activeTab==='practice'}" @click="switchTab('practice')">✏️ 动手练习</button>
+            <button class="tab-btn" :class="{active: activeTab==='terminal'}" @click="switchTab('terminal')">🖥️ 终端</button>
             <button class="tab-btn" :class="{active: activeTab==='cluster'}" @click="switchTab('cluster')" x-show="clusterMode">🔧 集群实战</button>
           </div>
 
@@ -297,7 +303,94 @@
             </template>
           </div>
 
-          <!-- ====== Tab 3: 集群实战面板 ====== -->
+          <!-- ====== Tab 3: 终端面板 ====== -->
+          <div class="terminal-panel" x-show="activeTab==='terminal'">
+            <!-- 模拟器模式提示 -->
+            <template x-if="!clusterMode">
+              <div class="terminal-mode-warning">
+                <div class="warning-icon">🟡</div>
+                <h3>当前为模拟器模式</h3>
+                <p>如需使用终端请配置 <code>K8S_QUEST_MODE=cluster</code></p>
+                <p class="warning-sub">配置后重启服务，即可在此关卡内直接执行 kubectl 命令。</p>
+              </div>
+            </template>
+
+            <!-- 集群模式: 完整终端 -->
+            <template x-if="clusterMode">
+              <div class="terminal-container terminal-embedded">
+
+                <!-- 终端顶栏 -->
+                <div class="terminal-mini-bar">
+                  <span class="terminal-status-badge" x-text="termStatusText"></span>
+                  <button class="terminal-btn-clear" @click="termClear()">🧹 清屏</button>
+                </div>
+
+                <!-- 输出区域 -->
+                <div class="term-output-area" id="term-output-embedded" @click="termFocusInput()">
+                  <template x-for="(line, i) in termOutput" :key="i">
+                    <div class="term-line" :class="'term-line-' + line.type">
+                      <template x-if="line.type === 'cmd'">
+                        <span class="term-prompt">kubectl❯&nbsp;</span>
+                      </template>
+                      <span class="term-text" x-text="line.text"></span>
+                    </div>
+                  </template>
+
+                  <!-- 加载中指示器 -->
+                  <template x-if="termLoading">
+                    <div class="term-loading-line">
+                      <span class="term-loading-dot"></span>
+                      <span class="term-loading-text">执行中...</span>
+                    </div>
+                  </template>
+                </div>
+
+                <!-- 自动补全建议 -->
+                <template x-if="termShowSuggest && termSuggestions.length > 0 && !termLoading">
+                  <div class="term-suggest-dropdown">
+                    <template x-for="(s, i) in termSuggestions" :key="s">
+                      <div class="term-suggest-item"
+                           :class="{ 'term-suggest-active': i === 0 }"
+                           @click="termPickSuggestion(s)"
+                           x-text="s"></div>
+                    </template>
+                  </div>
+                </template>
+
+                <!-- 确认执行区 -->
+                <template x-if="termConfirmCmd">
+                  <div class="term-confirm-bar">
+                    <span class="term-confirm-text">
+                      ⚠️ 确认执行: <code x-text="termConfirmCmd"></code>
+                    </span>
+                    <button class="term-btn-confirm" @click="termConfirmRun()" :disabled="termLoading">
+                      ✅ 确认执行
+                    </button>
+                    <button class="term-btn-cancel" @click="termCancelConfirm()">✕ 取消</button>
+                  </div>
+                </template>
+
+                <!-- 输入行 -->
+                <div class="term-input-line">
+                  <span class="term-prompt">kubectl❯</span>
+                  <input type="text"
+                         x-model="termInput"
+                         @keydown="termOnKeydown($event)"
+                         @input="termShowSuggest = true"
+                         @focus="termShowSuggest = true"
+                         class="term-input-field"
+                         :disabled="termLoading"
+                         placeholder="输入 kubectl 命令... (↑↓ 历史 · Tab 补全)"
+                         spellcheck="false"
+                         autocomplete="off"
+                         autocapitalize="off" />
+                </div>
+
+              </div>
+            </template>
+          </div>
+
+          <!-- ====== Tab 4: 集群实战面板 ====== -->
           <div class="cluster-panel" x-show="activeTab==='cluster' && clusterMode">
             <!-- 资源列表 -->
             <div class="cluster-section">

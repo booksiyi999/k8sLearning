@@ -423,4 +423,4 @@ class TestChapter4Registration:
 
     def test_total_levels(self):
         levels = list_levels()
-        assert len(levels) == 140
+        assert len(levels) == 145

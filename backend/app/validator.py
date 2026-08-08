@@ -35,6 +35,7 @@ class Level:
 
 def get_level(level_id: str) -> Level | None:
     """根据 id 查找关卡。"""
+    from app.levels.ch00_architecture import CHAPTER_0_LEVELS
     from app.levels.ch01_pod import CHAPTER_1_LEVELS
     from app.levels.ch02_deployment import CHAPTER_2_LEVELS
     from app.levels.ch03_service import CHAPTER_3_LEVELS
@@ -65,7 +66,8 @@ def get_level(level_id: str) -> Level | None:
     from app.levels.ch28_cka_exam import CHAPTER_28_LEVELS
     from app.levels.cluster_practice import CLUSTER_PRACTICE_LEVELS
     all_levels = (
-        CHAPTER_1_LEVELS + CHAPTER_2_LEVELS + CHAPTER_3_LEVELS
+        CHAPTER_0_LEVELS
+        + CHAPTER_1_LEVELS + CHAPTER_2_LEVELS + CHAPTER_3_LEVELS
         + CHAPTER_4_LEVELS + CHAPTER_5_LEVELS + CHAPTER_6_LEVELS
         + CHAPTER_7_LEVELS + CHAPTER_8_LEVELS
         + CHAPTER_9_LEVELS + CHAPTER_10_LEVELS + CHAPTER_11_LEVELS
@@ -86,6 +88,7 @@ def get_level(level_id: str) -> Level | None:
 
 def list_levels(chapter: str | None = None) -> list[dict]:
     """列出关卡。chapter=None 返回全部，否则按 chapter 过滤。"""
+    from app.levels.ch00_architecture import CHAPTER_0_LEVELS
     from app.levels.ch01_pod import CHAPTER_1_LEVELS
     from app.levels.ch02_deployment import CHAPTER_2_LEVELS
     from app.levels.ch03_service import CHAPTER_3_LEVELS
@@ -116,7 +119,8 @@ def list_levels(chapter: str | None = None) -> list[dict]:
     from app.levels.ch28_cka_exam import CHAPTER_28_LEVELS
     from app.levels.cluster_practice import CLUSTER_PRACTICE_LEVELS
     all_levels = (
-        CHAPTER_1_LEVELS + CHAPTER_2_LEVELS + CHAPTER_3_LEVELS
+        CHAPTER_0_LEVELS
+        + CHAPTER_1_LEVELS + CHAPTER_2_LEVELS + CHAPTER_3_LEVELS
         + CHAPTER_4_LEVELS + CHAPTER_5_LEVELS + CHAPTER_6_LEVELS
         + CHAPTER_7_LEVELS + CHAPTER_8_LEVELS
         + CHAPTER_9_LEVELS + CHAPTER_10_LEVELS + CHAPTER_11_LEVELS
