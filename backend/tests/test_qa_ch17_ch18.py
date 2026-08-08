@@ -103,6 +103,65 @@ spec:
           value: ""
 """
 
+# Q17.3: Role + RoleBinding for Operator RBAC
+VALID_ROLE_ROLEBINDING = """\
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: blog-operator-role
+rules:
+- apiGroups: ["blog.example.com"]
+  resources: ["blogs"]
+  verbs: ["get", "list", "watch", "create", "update", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: blog-operator-binding
+subjects:
+- kind: ServiceAccount
+  name: blog-operator-sa
+  namespace: default
+roleRef:
+  kind: Role
+  name: blog-operator-role
+  apiGroup: rbac.authorization.k8s.io
+"""
+
+# Q17.4: CRD with status subresource + Deployment
+VALID_CRD_WITH_SUBRESOURCES = """\
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: blogs.blog.example.com
+spec:
+  group: blog.example.com
+  names:
+    kind: Blog
+    plural: blogs
+  scope: Namespaced
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            properties:
+              title:
+                type: string
+          status:
+            type: object
+            properties:
+              phase:
+                type: string
+    subresources:
+      status: {}
+"""
+
 VALID_SECURE_POD = """\
 apiVersion: v1
 kind: Pod
@@ -233,25 +292,22 @@ class TestBoundaryInputs:
     # --- metadata.name validation ---
 
     def test_q171_bad_metadata_name(self):
-        # BUG: Q17.1 does NOT validate metadata.name format (<plural>.<group>).
-        # A CRD named "foo" passes Q17.1.
-        # SEVERITY: P1
+        """Q17.1 now validates metadata.name format (<plural>.<group>)."""
         yaml_bad = VALID_CRD.replace(
             "name: blogs.blog.example.com", "name: foo"
         )
         r = _check("Q17.1", yaml_bad)
-        assert r.ok, "BUG: Q17.1 does not validate metadata.name format"
+        assert not r.ok
+        assert "metadata.name" in r.error.lower() or "格式" in r.error
 
     def test_q171_empty_metadata_name(self):
-        # BUG: Q17.1 and simulator accept metadata.name: "" (empty string).
-        # The simulator checks `"name" not in metadata` which is False when
-        # name="" (key exists), so empty name passes.
-        # SEVERITY: P1
+        """Q17.1 now rejects empty metadata.name (format check fails)."""
         yaml_bad = VALID_CRD.replace(
             "name: blogs.blog.example.com", 'name: ""'
         )
         r = _check("Q17.1", yaml_bad)
-        assert r.ok, "BUG: Q17.1 accepts empty metadata.name"
+        assert not r.ok
+        assert "metadata.name" in r.error.lower() or "格式" in r.error
 
     # --- CRD spec field missing ---
 
@@ -324,9 +380,10 @@ class TestBoundaryInputs:
         r = _check("Q17.1", yaml_bad)
         assert not r.ok
 
-    # --- CR apiVersion mismatch ---
+    # --- CRD Schema validation (Q17.2 is now CRD Schema, not CR creation) ---
 
     def test_q172_wrong_group_in_apiVersion(self):
+        """Q17.2 is now CRD Schema validation. A CR (not CRD) should fail."""
         yaml_bad = VALID_CR.replace(
             "apiVersion: blog.example.com/v1", "apiVersion: blog.wrong.com/v1"
         )
@@ -334,16 +391,12 @@ class TestBoundaryInputs:
         assert not r.ok
 
     def test_q172_wrong_version_in_apiVersion(self):
-        # BUG: Simulator's _apply_customresource does NOT validate CR version
-        # against CRD versions. apiVersion: blog.example.com/v999 matches a
-        # CRD with only v1.
-        # SEVERITY: P1
+        """Q17.2 is now CRD Schema. A CR (not CRD) should fail."""
         yaml_bad = VALID_CR.replace(
             "apiVersion: blog.example.com/v1", "apiVersion: blog.example.com/v999"
         )
         r = _check("Q17.2", yaml_bad)
-        # BUG: This should fail but currently passes
-        assert r.ok, "BUG: Q17.2 accepts wrong version (v999) in apiVersion"
+        assert not r.ok
 
     # --- SecurityContext edge cases ---
 
@@ -636,58 +689,57 @@ class TestMaliciousInputs:
             apply_manifest(state, yaml_multi)
 
     def test_q172_multi_doc_crd_then_cr(self):
-        """User submits both CRD and CR in Q17.2 (CRD already preset).
-        The extra CRD should be processed fine, and CR should work."""
-        yaml_multi = VALID_CRD_NO_SCHEMA + "---\n" + VALID_CR
+        """Q17.2 is now CRD Schema. A CRD with schema + CR should pass
+        because the CRD has the required schema."""
+        yaml_multi = VALID_CRD + "---\n" + VALID_CR
         r = _check("Q17.2", yaml_multi)
         assert r.ok
 
     def test_crd_versions_non_dict_element(self):
-        """CRD spec.versions containing a non-dict element."""
+        """CRD spec.versions containing a non-dict element - tests Q17.1 (CRD creation)."""
         yaml_bad = VALID_CRD.replace(
             "  - name: v1\n    served: true\n    storage: true",
             '  - "just a string"'
         )
-        r = _check("Q17.3", yaml_bad)
+        r = _check("Q17.1", yaml_bad)
         assert not r.ok
 
     def test_crd_schema_malicious_type(self):
-        """openAPIV3Schema with non-standard type value."""
+        """openAPIV3Schema with non-standard type value - tests Q17.2 (CRD Schema)."""
         yaml_bad = VALID_CRD.replace(
             "        type: object\n        properties:",
             '        type: "malicious-type"\n        properties:'
         )
-        r = _check("Q17.3", yaml_bad)
+        r = _check("Q17.2", yaml_bad)
         assert not r.ok
 
     def test_q174_env_name_non_string_crash(self):
-        # BUG: env[].name as non-string (e.g., int 123) causes AttributeError
-        # on .upper() call at line 888 of ch17_crd_operator.py.
-        # The code does `name = e.get("name", "")` then `name.upper()` without
-        # type-checking. An int name crashes with AttributeError.
-        # SEVERITY: P0 - Unhandled exception causes HTTP 500
-        yaml_bad = VALID_OPERATOR_DEPLOY.replace(
-            '        - name: WATCH_NAMESPACE\n          value: ""',
-            "        - name: 123\n          value: \"\""
-        )
+        """env[].name as non-string should not crash. Q17.4 now needs CRD+Deployment."""
+        yaml_bad = VALID_CRD_WITH_SUBRESOURCES + "---\n" + \
+            VALID_OPERATOR_DEPLOY.replace(
+                '        - name: WATCH_NAMESPACE\n          value: ""',
+                "        - name: 123\n          value: \"\""
+            )
         r = _check("Q17.4", yaml_bad)
         assert not r.ok
 
     def test_q174_env_dict_instead_of_list(self):
         """env as dict instead of list should not crash."""
-        yaml_bad = VALID_OPERATOR_DEPLOY.replace(
-            "        env:\n        - name: WATCH_NAMESPACE\n          value: \"\"",
-            '        env:\n          WATCH_NAMESPACE: ""'
-        )
+        yaml_bad = VALID_CRD_WITH_SUBRESOURCES + "---\n" + \
+            VALID_OPERATOR_DEPLOY.replace(
+                "        env:\n        - name: WATCH_NAMESPACE\n          value: \"\"",
+                '        env:\n          WATCH_NAMESPACE: ""'
+            )
         r = _check("Q17.4", yaml_bad)
         assert not r.ok
 
     def test_q174_env_null(self):
         """env: null should not crash."""
-        yaml_bad = VALID_OPERATOR_DEPLOY.replace(
-            "        env:\n        - name: WATCH_NAMESPACE\n          value: \"\"",
-            "        env: null"
-        )
+        yaml_bad = VALID_CRD_WITH_SUBRESOURCES + "---\n" + \
+            VALID_OPERATOR_DEPLOY.replace(
+                "        env:\n        - name: WATCH_NAMESPACE\n          value: \"\"",
+                "        env: null"
+            )
         r = _check("Q17.4", yaml_bad)
         assert not r.ok
 
@@ -746,8 +798,8 @@ class TestStatePollution:
         assert r1.ok == r2.ok
 
     def test_multiple_calls_consistent_q172(self):
-        """Q17.2 uses preset_state - calling multiple times should be consistent."""
-        results = [_check("Q17.2", VALID_CR).ok for _ in range(5)]
+        """Q17.2 is now CRD Schema. Calling multiple times should be consistent."""
+        results = [_check("Q17.2", VALID_CRD).ok for _ in range(5)]
         assert all(results)
 
     def test_multiple_calls_consistent_q182(self):
@@ -817,117 +869,104 @@ class TestLogicCorrectness:
         r = _check("Q17.1", VALID_CRD_NO_SCHEMA)
         assert r.ok, r.error
 
-    # --- Q17.2 ---
+    # --- Q17.2 (now CRD Schema validation) ---
 
     def test_q172_valid(self):
-        r = _check("Q17.2", VALID_CR)
+        r = _check("Q17.2", VALID_CRD)
         assert r.ok, r.error
 
-    def test_q172_apiVersion_substring_match(self):
-        # BUG: Q17.2 checks `"blog.example.com" not in api_version` which is a
-        # substring match. An apiVersion like "blog.example.com/v1/extra" passes
-        # because it contains the substring.
-        # SEVERITY: P2
-        yaml_bad = VALID_CR.replace(
-            "apiVersion: blog.example.com/v1",
-            "apiVersion: blog.example.com/v1/extra",
-        )
-        r = _check("Q17.2", yaml_bad)
-        assert not r.ok, "BUG: Q17.2 accepts apiVersion with extra path component"
-
-    def test_q172_empty_spec(self):
-        yaml_bad = VALID_CR.replace(
-            '  title: "Hello K8s"\n  author: "dev"', ""
-        )
-        r = _check("Q17.2", yaml_bad)
-        assert not r.ok
-
-    def test_q172_missing_title(self):
-        yaml_bad = VALID_CR.replace('  title: "Hello K8s"\n', "")
-        r = _check("Q17.2", yaml_bad)
-        assert not r.ok
-
-    # --- Q17.3 ---
-
-    def test_q173_valid(self):
-        r = _check("Q17.3", VALID_CRD)
-        assert r.ok, r.error
-
-    def test_q173_missing_schema(self):
-        r = _check("Q17.3", VALID_CRD_NO_SCHEMA)
+    def test_q172_no_schema_fails(self):
+        r = _check("Q17.2", VALID_CRD_NO_SCHEMA)
         assert not r.ok
         assert "schema" in r.error.lower()
 
-    def test_q173_served_false_storage_false(self):
-        # BUG: Q17.3 does not validate served/storage flags. A version with
-        # served: false and storage: false passes the check.
-        # SEVERITY: P2
+    def test_q172_empty_spec_properties_fails(self):
+        """CRD with schema but empty spec properties should fail."""
         yaml_bad = VALID_CRD.replace(
-            "    served: true\n    storage: true",
-            "    served: false\n    storage: false",
+            "              title:\n                type: string\n              author:\n                type: string",
+            ""
         )
-        r = _check("Q17.3", yaml_bad)
-        assert r.ok, "BUG: Q17.3 accepts served:false, storage:false"
+        r = _check("Q17.2", yaml_bad)
+        assert not r.ok
 
-    def test_q173_missing_openAPIV3Schema(self):
-        yaml_bad = VALID_CRD.replace(
-            "    schema:\n      openAPIV3Schema:",
-            "    schema:"
-        )
-        # This creates schema: null which should fail
-        yaml_bad = VALID_CRD.replace(
-            "      openAPIV3Schema:", ""
+    # --- Q17.3 (now Operator RBAC: Role + RoleBinding) ---
+
+    def test_q173_valid(self):
+        r = _check("Q17.3", VALID_ROLE_ROLEBINDING)
+        assert r.ok, r.error
+
+    def test_q173_missing_role(self):
+        """Only RoleBinding, no Role."""
+        yaml_bad = VALID_ROLE_ROLEBINDING.split("---", 1)[1]
+        r = _check("Q17.3", yaml_bad)
+        assert not r.ok
+
+    def test_q173_empty_rules(self):
+        """Role with empty rules should fail."""
+        yaml_bad = VALID_ROLE_ROLEBINDING.replace("rules:\n- apiGroups:", "rules: []\n# apiGroups:")
+        r = _check("Q17.3", yaml_bad)
+        assert not r.ok
+
+    def test_q173_no_sa_subject(self):
+        """RoleBinding with User subject instead of ServiceAccount."""
+        yaml_bad = VALID_ROLE_ROLEBINDING.replace(
+            "- kind: ServiceAccount\n  name: blog-operator-sa",
+            "- kind: User\n  name: admin"
         )
         r = _check("Q17.3", yaml_bad)
         assert not r.ok
 
-    def test_q173_type_not_object(self):
-        yaml_bad = VALID_CRD.replace(
-            "        type: object\n        properties:\n          spec:",
-            '        type: string\n        properties:\n          spec:'
-        )
-        r = _check("Q17.3", yaml_bad)
-        assert not r.ok
-
-    # --- Q17.4 ---
+    # --- Q17.4 (now Status subresource + Deployment) ---
 
     def test_q174_valid(self):
-        r = _check("Q17.4", VALID_OPERATOR_DEPLOY)
+        yaml_valid = VALID_CRD_WITH_SUBRESOURCES + "---\n" + VALID_OPERATOR_DEPLOY
+        r = _check("Q17.4", yaml_valid)
         assert r.ok, r.error
 
     def test_q174_missing_watch_env(self):
-        yaml_bad = VALID_OPERATOR_DEPLOY.replace(
-            "        env:\n        - name: WATCH_NAMESPACE\n          value: \"\"",
-            ""
-        )
+        yaml_no_watch = VALID_CRD_WITH_SUBRESOURCES + "---\n" + \
+            VALID_OPERATOR_DEPLOY.replace(
+                "        env:\n        - name: WATCH_NAMESPACE\n          value: \"\"", ""
+            )
+        r = _check("Q17.4", yaml_no_watch)
+        assert not r.ok
+
+    def test_q174_env_name_non_string_crash(self):
+        """env[].name as non-string should not crash."""
+        yaml_bad = VALID_CRD_WITH_SUBRESOURCES + "---\n" + \
+            VALID_OPERATOR_DEPLOY.replace(
+                '        - name: WATCH_NAMESPACE\n          value: ""',
+                "        - name: 123\n          value: \"\""
+            )
         r = _check("Q17.4", yaml_bad)
         assert not r.ok
 
-    def test_q174_env_crd_name_passes(self):
-        # BUG: Env var matching is too loose. Any name containing "WATCH",
-        # "NAMESPACE", or "CRD" passes. E.g., CRD_NAME is accepted.
-        # SEVERITY: P2
-        yaml_bad = VALID_OPERATOR_DEPLOY.replace(
-            '        - name: WATCH_NAMESPACE\n          value: ""',
-            "        - name: CRD_NAME\n          value: blog"
-        )
+    def test_q174_env_dict_instead_of_list(self):
+        """env as dict instead of list should not crash."""
+        yaml_bad = VALID_CRD_WITH_SUBRESOURCES + "---\n" + \
+            VALID_OPERATOR_DEPLOY.replace(
+                "        env:\n        - name: WATCH_NAMESPACE\n          value: \"\"",
+                '        env:\n          WATCH_NAMESPACE: ""'
+            )
         r = _check("Q17.4", yaml_bad)
-        assert not r.ok, "BUG: Q17.4 accepts env CRD_NAME (not WATCH_NAMESPACE)"
+        assert not r.ok
 
-    def test_q174_env_namespace_label_passes(self):
-        # BUG: MY_NAMESPACE_LABEL passes because it contains "NAMESPACE"
-        # SEVERITY: P2
-        yaml_bad = VALID_OPERATOR_DEPLOY.replace(
-            '        - name: WATCH_NAMESPACE\n          value: ""',
-            "        - name: MY_NAMESPACE_LABEL\n          value: foo"
-        )
+    def test_q174_env_null(self):
+        """env: null should not crash."""
+        yaml_bad = VALID_CRD_WITH_SUBRESOURCES + "---\n" + \
+            VALID_OPERATOR_DEPLOY.replace(
+                "        env:\n        - name: WATCH_NAMESPACE\n          value: \"\"",
+                "        env: null"
+            )
         r = _check("Q17.4", yaml_bad)
-        assert not r.ok, "BUG: Q17.4 accepts env MY_NAMESPACE_LABEL"
+        assert not r.ok
 
     def test_q174_missing_image(self):
-        yaml_bad = VALID_OPERATOR_DEPLOY.replace(
-            "        image: operator-sdk/example-operator:v1\n", ""
-        )
+        """Q17.4 now checks status subresource + WATCH_NAMESPACE, not image.
+        A deployment without image but with WATCH_NAMESPACE will pass.
+        Test that a deployment WITHOUT WATCH_NAMESPACE fails."""
+        yaml_bad = VALID_CRD_WITH_SUBRESOURCES + "---\n" + \
+            VALID_OPERATOR_DEPLOY.replace("WATCH_NAMESPACE", "NOT_WATCH_NAMESPACE")
         r = _check("Q17.4", yaml_bad)
         assert not r.ok
 
@@ -946,9 +985,7 @@ class TestLogicCorrectness:
         assert r.ok, r.error
 
     def test_q175_no_watch_env_required(self):
-        # BUG: Q17.5 does NOT check for WATCH_NAMESPACE env var (unlike Q17.4).
-        # A Deployment without any env passes Q17.5.
-        # SEVERITY: P1
+        """Q17.5 now checks WATCH_NAMESPACE env (previously a BUG)."""
         yaml_full = """\
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -990,11 +1027,11 @@ spec:
         image: nginx:1.25
 """
         r = _check("Q17.5", yaml_full)
-        assert not r.ok, "BUG: Q17.5 does not check WATCH_NAMESPACE env (inconsistent with Q17.4)"
+        assert not r.ok
+        assert "watch" in r.error.lower()
 
     def test_q175_no_image_required(self):
-        # BUG: Q17.5 does NOT check Deployment image (unlike Q17.4).
-        # SEVERITY: P1
+        """Q17.5 now checks Deployment image (previously a BUG)."""
         yaml_full = """\
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -1038,12 +1075,8 @@ spec:
           value: ""
 """
         r = _check("Q17.5", yaml_full)
-        # This should fail because containers[0] has no image,
-        # but _validate_deployment checks containers elements are dicts (not image)
-        # and Q17.5 check_fn doesn't check image either
-        # Actually _validate_deployment requires containers to be non-empty list of dicts
-        # but doesn't require image field. Q17.5 check_fn also doesn't check image.
-        assert r.ok, "BUG: Q17.5 does not check Deployment image"
+        assert not r.ok
+        assert "image" in r.error.lower()
 
     def test_q175_missing_crd(self):
         yaml_no_crd = VALID_SA.replace("app-sa", "blog-operator-sa") + "---\n" + VALID_OPERATOR_DEPLOY

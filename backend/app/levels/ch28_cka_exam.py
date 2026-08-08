@@ -1,1834 +1,1554 @@
-"""Chapter 28: CKA 模拟考试（5 关）
+"""Chapter 28: CKA 模拟考试 - kubectl 操作挑战（5 关）
 
-Q28.1 Pod 部署与调试 - 综合 Pod 操作
-Q28.2 网络与安全策略 - Service+NetworkPolicy+Ingress
-Q28.3 存储与配置 - PVC+ConfigMap+Secret
-Q28.4 集群故障排查 - 综合诊断
-Q28.5 RBAC 与安全 - 权限与安全上下文
+Q28.1 kubectl 操作挑战 - 创建 Pod + 暴露 Service + 扩容
+Q28.2 故障排查挑战 - 排查 CrashLoopBackOff
+Q28.3 网络排查挑战 - 排查 Service 连通性
+Q28.4 RBAC 排查挑战 - 检查权限
+Q28.5 综合挑战 - 多步骤操作（命名空间+部署+网络策略+验证）
+
+CKA 考试核心是 kubectl 操作能力，本章全部重写为命令行挑战。
 """
-import yaml
 from app.validator import Level, CheckResult, Lesson
 from app.simulator import apply_manifest, preset_state, ClusterState, K8sError
 
 
-def _parse_yaml_docs(user_yaml: str) -> list[dict]:
-    """安全解析多文档 YAML，返回非 None 文档列表。"""
-    docs = []
-    for doc in yaml.safe_load_all(user_yaml):
-        if doc is not None:
-            docs.append(doc)
-    return docs
+# ==================== Q28.1 kubectl 操作挑战 ====================
 
+def _check_281_kubectl_ops(user_input: str) -> CheckResult:
+    """Q28.1 验证 kubectl run/expose/scale 命令序列"""
+    text = user_input.strip()
 
-# ==================== Q28.1 Pod 部署与调试 ====================
-
-def _check_281_pod_deploy(user_yaml: str) -> CheckResult:
-    """Q28.1 综合 Pod 操作：Deployment + Service + 资源限制"""
-    try:
-        docs = _parse_yaml_docs(user_yaml)
-    except yaml.YAMLError as e:
-        return CheckResult(ok=False, error=f"YAML 解析失败: {e}", hints=[])
-
-    if not docs:
+    if not text:
         return CheckResult(
             ok=False,
-            error="YAML 为空或格式错误",
-            hints=["你需要编写多文档 YAML"],
+            error="请输入 kubectl 命令序列",
+            hints=["需要使用 kubectl run、kubectl expose、kubectl scale 命令"],
         )
 
-    deploy_doc = None
-    svc_doc = None
-    for doc in docs:
-        if not isinstance(doc, dict):
-            continue
-        kind = doc.get("kind", "")
-        if kind == "Deployment" and deploy_doc is None:
-            deploy_doc = doc
-        elif kind == "Service" and svc_doc is None:
-            svc_doc = doc
+    lower = text.lower()
 
-    if not deploy_doc:
+    # 检查包含 kubectl
+    if "kubectl" not in lower:
         return CheckResult(
             ok=False,
-            error="缺少 Deployment",
-            hints=["创建一个 Deployment 部署应用"],
+            error="命令中缺少 kubectl",
+            hints=["CKA 核心是 kubectl 操作能力，请使用 kubectl 命令"],
         )
 
-    spec = deploy_doc.get("spec", {})
-    if not isinstance(spec, dict):
-        return CheckResult(ok=False, error="Deployment 缺少 spec", hints=[])
-
-    # 检查 replicas >= 2
-    replicas = spec.get("replicas", 1)
-    if not isinstance(replicas, int) or replicas < 2:
+    # 检查 kubectl run（创建 Pod/Deployment）
+    has_run = "kubectl" in lower and "run" in lower
+    if not has_run:
         return CheckResult(
             ok=False,
-            error=f"CKA 要求 replicas >= 2，实际为 {replicas}",
-            hints=["设置 replicas: 2 或更多"],
+            error="缺少 kubectl run 命令（创建 Pod/Deployment）",
+            hints=["使用 kubectl run <name> --image=<image> 创建应用"],
         )
 
-    template = spec.get("template", {})
-    if not isinstance(template, dict):
-        return CheckResult(ok=False, error="Deployment 缺少 spec.template", hints=[])
-
-    pod_spec = template.get("spec", {})
-    if not isinstance(pod_spec, dict):
-        return CheckResult(ok=False, error="Deployment 缺少 spec.template.spec", hints=[])
-
-    containers = pod_spec.get("containers", [])
-    if not isinstance(containers, list) or not containers:
-        return CheckResult(ok=False, error="缺少 containers", hints=[])
-
-    c = containers[0]
-    if not isinstance(c, dict):
-        return CheckResult(ok=False, error="containers[0] 格式错误", hints=[])
-
-    # 检查资源限制
-    resources = c.get("resources")
-    if not isinstance(resources, dict):
+    # 检查 kubectl expose（暴露 Service）
+    has_expose = "expose" in lower
+    if not has_expose:
         return CheckResult(
             ok=False,
-            error="容器缺少 resources（CKA 要求设置资源限制）",
-            hints=["添加 resources.requests 和 resources.limits"],
+            error="缺少 kubectl expose 命令（暴露 Service）",
+            hints=["使用 kubectl expose deployment <name> --port=<port> 暴露服务"],
         )
 
-    has_requests = isinstance(resources.get("requests"), dict)
-    has_limits = isinstance(resources.get("limits"), dict)
-    if not has_requests or not has_limits:
+    # 检查 kubectl scale（扩容）
+    has_scale = "scale" in lower
+    if not has_scale:
         return CheckResult(
             ok=False,
-            error="resources 需要同时包含 requests 和 limits",
-            hints=["添加 requests: {cpu: 100m, memory: 128Mi} 和 limits: {cpu: 200m, memory: 256Mi}"],
-        )
-
-    # 检查 readinessProbe
-    has_readiness = isinstance(c.get("readinessProbe"), dict)
-    if not has_readiness:
-        return CheckResult(
-            ok=False,
-            error="容器缺少 readinessProbe（CKA 要求配置就绪探针）",
-            hints=["添加 readinessProbe 配置 HTTP/TCP 检查"],
-        )
-
-    # 检查 Service
-    if not svc_doc:
-        return CheckResult(
-            ok=False,
-            error="缺少 Service（CKA 要求暴露服务）",
-            hints=["添加一个 Service 暴露 Deployment"],
+            error="缺少 kubectl scale 命令（扩容副本数）",
+            hints=["使用 kubectl scale deployment <name> --replicas=<n> 扩容"],
         )
 
     return CheckResult(
         ok=True, state=None,
-        hints=["综合 Pod 部署完成！Deployment + Service + 资源限制 + 就绪探针 🎯"],
+        hints=["kubectl 操作序列正确！run + expose + scale 是 CKA 最基础的操作组合 🎯"],
     )
 
 
 LEVEL_Q28_1 = Level(
     id="Q28.1",
     chapter="ch28",
-    title="Pod 部署与调试 - 综合 Pod 操作",
+    title="kubectl 操作挑战 - 创建+暴露+扩容",
     description="""
-# CKA 模拟 - Pod 部署与调试 🎯
+# CKA 挑战 - kubectl 操作 🎯
 
-**综合考核**：创建一个生产级 Deployment 并暴露 Service。
+**核心考核**：使用 kubectl 命令完成应用部署、服务暴露和扩容。
+
+## 场景
+
+你需要完成以下操作序列：
+1. 创建一个 nginx Deployment
+2. 将其暴露为 Service
+3. 扩容到 3 个副本
 
 ## 任务
 
-创建多文档 YAML 包含：
-1. **Deployment**（名称 `nginx-app`）
-   - replicas: 3
-   - 容器 `nginx`，镜像 `nginx:1.25`
-   - resources: requests {cpu: 100m, memory: 128Mi}, limits {cpu: 200m, memory: 256Mi}
-   - readinessProbe: HTTP GET / on port 80
-2. **Service**（名称 `nginx-svc`）
-   - type: NodePort
-   - port: 80, targetPort: 80
-   - selector 匹配 app: nginx-app
+写出完整的 kubectl 命令序列：
+- `kubectl run` 创建 Deployment
+- `kubectl expose` 暴露 Service
+- `kubectl scale` 扩容副本
 
 ## 提示
 
-```yaml
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: nginx-app
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: nginx-app
-  template:
-    metadata:
-      labels:
-        app: nginx-app
-    spec:
-      containers:
-      - name: nginx
-        image: nginx:1.25
-        resources:
-          requests:
-            cpu: 100m
-            memory: 128Mi
-          limits:
-            cpu: 200m
-            memory: 256Mi
-        readinessProbe:
-          httpGet:
-            path: /
-            port: 80
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: nginx-svc
-spec:
-  type: NodePort
-  selector:
-    app: nginx-app
-  ports:
-  - port: 80
-    targetPort: 80
+```bash
+# 创建 Deployment
+kubectl run nginx-app --image=nginx:1.25
+
+# 暴露 Service
+kubectl expose deployment nginx-app --port=80 --target-port=80
+
+# 扩容到 3 个副本
+kubectl scale deployment nginx-app --replicas=3
 ```
 """,
     starter_yaml="""\
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: nginx-app
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: nginx-app
-  template:
-    metadata:
-      labels:
-        app: nginx-app
-    spec:
-      containers:
-      - name: nginx
-        image: nginx:1.25
-        # 添加 resources 和 readinessProbe
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: nginx-svc
-spec:
-  # 添加 type, selector, ports
+# 输入 kubectl 命令序列
+# 1. kubectl run <name> --image=<image>
+# 2. kubectl expose deployment <name> --port=<port>
+# 3. kubectl scale deployment <name> --replicas=<n>
 """,
-    check_fn=_check_281_pod_deploy,
+    check_fn=_check_281_kubectl_ops,
     lesson=Lesson(
         concept="""\
-## CKA Pod 部署与调试
+## CKA kubectl 操作基础
 
-CKA（Certified Kubernetes Administrator）考试中，Pod 部署是最核心的技能。本关模拟考试中常见的综合部署场景。
+CKA 考试中，**kubectl 命令行操作**是最核心的技能。考试时间有限（2小时），熟练使用 kubectl 命令比手写 YAML 更高效。
 
-### CKA 考试要点
+### kubectl run - 创建资源
 
-1. **快速编写 YAML**：考试时间有限，需要熟练手写 YAML
-2. **资源管理**：必须设置 requests/limits
-3. **健康检查**：配置 livenessProbe/readinessProbe
-4. **服务暴露**：通过 Service 暴露应用
-5. **调试能力**：使用 kubectl describe/logs/exec 排查问题
-
-### 常用 kubectl 调试命令
+`kubectl run` 可以快速创建 Deployment 或 Pod：
 
 ```bash
-kubectl get pods -o wide           # 查看 Pod 详情（含节点）
-kubectl describe pod <pod>         # 查看 Pod 事件和状态
-kubectl logs <pod> -c <container>  # 查看容器日志
-kubectl exec -it <pod> -- /bin/sh  # 进入容器调试
-kubectl get events --sort-by=.metadata.creationTimestamp  # 查看事件
+# 创建 Deployment（默认行为，K8s 1.18+）
+kubectl run nginx-app --image=nginx:1.25
+
+# 创建 Pod（使用 --restart=Never）
+kubectl run nginx-pod --image=nginx:1.25 --restart=Never
+
+# 带命令和参数
+kubectl run busybox --image=busybox --command -- sleep 3600
+
+# 带标签
+kubectl run nginx-app --image=nginx:1.25 --labels=app=web,env=prod
+
+# 带端口
+kubectl run nginx-app --image=nginx:1.25 --port=80
 ```
 
-### CKA 备考建议
+### kubectl expose - 暴露 Service
 
-- 练习不用 YAML 文件直接用 kubectl 创建资源
-- 熟记 kubectl 速查表
-- 理解 Pod 生命周期和状态
-- 掌握滚动更新和回滚
+`kubectl expose` 从已有资源（Deployment/Pod/ReplicaSet）创建 Service：
+
+```bash
+# 暴露 Deployment
+kubectl expose deployment nginx-app --port=80 --target-port=80
+
+# 暴露为 NodePort
+kubectl expose deployment nginx-app --port=80 --type=NodePort
+
+# 暴露为 LoadBalancer
+kubectl expose deployment nginx-app --port=80 --type=LoadBalancer
+
+# 指定标签选择器
+kubectl expose deployment nginx-app --port=80 --target-port=8080
+```
+
+### kubectl scale - 扩缩容
+
+```bash
+# 扩容到 3 个副本
+kubectl scale deployment nginx-app --replicas=3
+
+# 缩容到 1 个副本
+kubectl scale deployment nginx-app --replicas=1
+
+# 批量扩容多个 Deployment
+kubectl scale deployment --all --replicas=3 -n production
+
+# 基于 CPU 使用率自动扩容（HPA）
+kubectl autoscale deployment nginx-app --min=2 --max=10 --cpu-percent=80
+```
+
+### CKA 考试技巧
+
+1. **优先用命令而非 YAML**：`kubectl run` + `kubectl expose` 比 YAML 快得多
+2. **--dry-run=client -o yaml**：生成 YAML 供修改
+3. **kubectl create**：创建 Namespace、ConfigMap、Secret 等资源
+4. **善用 --help**：忘记参数时 `kubectl run --help`
 """,
         key_fields=[
-            {"name": "spec.replicas", "description": "多副本高可用", "required": True, "example": "3"},
-            {"name": "resources.requests/limits", "description": "资源请求和限制", "required": True, "example": "{cpu: 100m, memory: 128Mi}"},
-            {"name": "readinessProbe", "description": "就绪探针，控制流量进入", "required": True, "example": "{httpGet: {path: /, port: 80}}"},
-            {"name": "Service.type", "description": "服务类型", "required": True, "example": "NodePort"},
+            {"name": "kubectl run", "description": "创建 Deployment 或 Pod", "required": True, "example": "kubectl run nginx-app --image=nginx:1.25"},
+            {"name": "kubectl expose", "description": "从 Deployment/Pod 创建 Service", "required": True, "example": "kubectl expose deployment nginx-app --port=80"},
+            {"name": "kubectl scale", "description": "扩缩容 Deployment 副本数", "required": True, "example": "kubectl scale deployment nginx-app --replicas=3"},
+            {"name": "--image", "description": "指定容器镜像", "required": True, "example": "--image=nginx:1.25"},
+            {"name": "--port / --target-port", "description": "Service 端口和容器端口", "required": False, "example": "--port=80 --target-port=80"},
         ],
         diagram="""\
-  CKA 综合部署架构
+  kubectl 操作序列
 
-  ┌─── Deployment (nginx-app, replicas: 3) ───┐
-  │  containers:                              │
-  │  - nginx:1.25                             │
-  │    resources: requests + limits           │
-  │    readinessProbe: HTTP GET / :80         │
-  └──────────────────┬────────────────────────┘
-                     │
-        ┌────────────┼────────────┐
-        ▼            ▼            ▼
-   ┌─────────┐ ┌─────────┐ ┌─────────┐
-   │ Pod-0   │ │ Pod-1   │ │ Pod-2   │
-   │ Ready   │ │ Ready   │ │ Ready   │
-   └────┬────┘ └────┬────┘ └────┬────┘
-        └───────────┼───────────┘
-                    │ selector: app=nginx-app
-                    ▼
-            ┌───────────────┐
-            │ Service       │
-            │ nginx-svc     │
-            │ NodePort:80   │
-            └───────────────┘
+  步骤 1: kubectl run                     步骤 2: kubectl expose
+  ┌──────────────────────────┐            ┌──────────────────────────┐
+  │ kubectl run nginx-app    │            │ kubectl expose deployment │
+  │   --image=nginx:1.25     │            │   nginx-app              │
+  │                          │            │   --port=80              │
+  │ -> 创建 Deployment        │ ────────► │ -> 创建 Service           │
+  │   nginx-app (replicas:1) │            │   nginx-app:80            │
+  └──────────────────────────┘            └──────────┬───────────────┘
+                                                     │
+                                                     ▼
+                                          步骤 3: kubectl scale
+                                          ┌──────────────────────────┐
+                                          │ kubectl scale deployment  │
+                                          │   nginx-app --replicas=3 │
+                                          │                          │
+                                          │ -> 扩容到 3 个副本        │
+                                          │   Pod-0, Pod-1, Pod-2    │
+                                          └──────────────────────────┘
+                                                     │
+                                                     ▼
+                                          ┌──────────────────────────┐
+                                          │     Service (nginx-app)  │
+                                          │          port: 80        │
+                                          │    ┌───┬───┬───┐         │
+                                          │    │P0 │P1 │P2 │         │
+                                          │    └───┴───┴───┘         │
+                                          └──────────────────────────┘
 """,
         example_yaml="""\
----                                          # 文档分隔
-apiVersion: apps/v1                          # Deployment API
-kind: Deployment                             # 资源类型
-metadata:                                    # 元数据
-  name: nginx-app                            # Deployment 名称
-spec:                                        # 规格
-  replicas: 3                                # 3 副本
-  selector:                                  # 标签选择器
-    matchLabels:
-      app: nginx-app
-  template:                                  # Pod 模板
-    metadata:
-      labels:
-        app: nginx-app
-    spec:                                    # Pod 规格
-      containers:                            # 容器列表
-      - name: nginx                          # 容器名
-        image: nginx:1.25                    # 镜像
-        resources:                           # 资源限制
-          requests:                          # 请求
-            cpu: 100m
-            memory: 128Mi
-          limits:                            # 上限
-            cpu: 200m
-            memory: 256Mi
-        readinessProbe:                      # 就绪探针
-          httpGet:                           # HTTP 检查
-            path: /                          # 检查路径
-            port: 80                         # 检查端口
----                                          # 文档分隔
-apiVersion: v1                               # Service API
-kind: Service                                # 资源类型
-metadata:                                    # 元数据
-  name: nginx-svc                            # Service 名称
-spec:                                        # 规格
-  type: NodePort                             # 节点端口
-  selector:                                  # 标签选择器
-    app: nginx-app
-  ports:                                     # 端口映射
-  - port: 80                                 # Service 端口
-    targetPort: 80                           # Pod 端口
+# === CKA kubectl 操作序列 ===
+
+# 步骤 1: 创建 Deployment
+kubectl run nginx-app --image=nginx:1.25 --port=80
+
+# 步骤 2: 暴露 Service
+kubectl expose deployment nginx-app --port=80 --target-port=80
+
+# 步骤 3: 扩容到 3 个副本
+kubectl scale deployment nginx-app --replicas=3
+
+# 验证
+kubectl get deployments
+kubectl get svc
+kubectl get pods -o wide
 """,
         common_errors=[
-            "忘记设置 resources（CKA 考试中资源管理是必考项）",
-            "readinessProbe 路径或端口写错导致 Pod 不 Ready",
-            "Service selector 不匹配 Pod labels",
-            "replicas 设为 1（考试要求多副本高可用）",
+            "kubectl run 忘记指定 --image，创建失败",
+            "kubectl expose 的资源类型和名称与实际不匹配（如 deployment 名写错）",
+            "kubectl scale 指定的资源类型错误（如写成 scale pod 而非 scale deployment）",
+            "expose 后忘记验证 Service 的 Endpoints 是否正常",
+            "混淆 --port（Service 端口）和 --target-port（容器端口）",
         ],
         tips=[
-            "CKA 考试时间紧张，优先用 kubectl create deployment 快速生成再修改",
-            "用 kubectl get pods -w 实时观察 Pod 状态变化",
-            "Pod 一直 NotReady 时先检查 readinessProbe 配置",
+            "使用 `kubectl run --dry-run=client -o yaml > deploy.yaml` 生成 YAML 再修改",
+            "用 `kubectl get svc` 确认 Service 的 ClusterIP 和端口",
+            "用 `kubectl get endpoints <svc>` 确认 Service 后端有 Pod",
+            "CKA 考试中优先用命令操作，省下时间给复杂题目",
         ],
     ),
 )
 
 
-# ==================== Q28.2 网络与安全策略 ====================
+# ==================== Q28.2 故障排查挑战 ====================
 
-def _check_282_network_security(user_yaml: str) -> CheckResult:
-    """Q28.2 Service + NetworkPolicy + Ingress 综合配置"""
-    try:
-        docs = _parse_yaml_docs(user_yaml)
-    except yaml.YAMLError as e:
-        return CheckResult(ok=False, error=f"YAML 解析失败: {e}", hints=[])
+def _check_282_troubleshoot(user_input: str) -> CheckResult:
+    """Q28.2 验证排查 CrashLoopBackOff 的 kubectl 命令序列"""
+    text = user_input.strip()
 
-    if not docs:
+    if not text:
         return CheckResult(
             ok=False,
-            error="YAML 为空或格式错误",
-            hints=["你需要编写多文档 YAML"],
+            error="请输入 kubectl 排查命令序列",
+            hints=["排查 CrashLoopBackOff 需要 kubectl describe 和 kubectl logs"],
         )
 
-    svc_doc = None
-    np_doc = None
-    ingress_doc = None
-    for doc in docs:
-        if not isinstance(doc, dict):
-            continue
-        kind = doc.get("kind", "")
-        if kind == "Service" and svc_doc is None:
-            svc_doc = doc
-        elif kind == "NetworkPolicy" and np_doc is None:
-            np_doc = doc
-        elif kind == "Ingress" and ingress_doc is None:
-            ingress_doc = doc
+    lower = text.lower()
 
-    if not svc_doc:
+    # 检查包含 kubectl
+    if "kubectl" not in lower:
         return CheckResult(
             ok=False,
-            error="缺少 Service",
-            hints=["创建一个 Service 暴露后端 Pod"],
+            error="命令中缺少 kubectl",
+            hints=["使用 kubectl describe 和 kubectl logs 排查 Pod 故障"],
         )
 
-    if not np_doc:
+    # 检查 describe（查看 Pod 事件和状态）
+    has_describe = "describe" in lower
+    if not has_describe:
         return CheckResult(
             ok=False,
-            error="缺少 NetworkPolicy（CKA 要求网络隔离）",
-            hints=["创建一个 NetworkPolicy 限制 Pod 入站流量"],
+            error="缺少 kubectl describe 命令（查看 Pod 事件和详细状态）",
+            hints=["使用 kubectl describe pod <pod-name> 查看 Events 和错误信息"],
         )
 
-    # 检查 NetworkPolicy 结构
-    np_spec = np_doc.get("spec", {})
-    if not isinstance(np_spec, dict):
-        return CheckResult(ok=False, error="NetworkPolicy 缺少 spec", hints=[])
-
-    if "policyTypes" not in np_spec:
+    # 检查 logs（查看容器日志）
+    has_logs = "logs" in lower
+    if not has_logs:
         return CheckResult(
             ok=False,
-            error="NetworkPolicy 缺少 policyTypes",
-            hints=["添加 policyTypes: [Ingress] 或 [Ingress, Egress]"],
-        )
-
-    if not ingress_doc:
-        return CheckResult(
-            ok=False,
-            error="缺少 Ingress（CKA 要求配置七层路由）",
-            hints=["创建一个 Ingress 配置域名路由"],
-        )
-
-    # 检查 Ingress 结构
-    ing_spec = ingress_doc.get("spec", {})
-    if not isinstance(ing_spec, dict):
-        return CheckResult(ok=False, error="Ingress 缺少 spec", hints=[])
-
-    rules = ing_spec.get("rules")
-    if not isinstance(rules, list) or not rules:
-        return CheckResult(
-            ok=False,
-            error="Ingress 缺少 spec.rules",
-            hints=["添加 rules 配置域名和路径路由"],
+            error="缺少 kubectl logs 命令（查看容器日志）",
+            hints=["使用 kubectl logs <pod-name> 查看应用日志，或 kubectl logs <pod> --previous 查看上次崩溃的日志"],
         )
 
     return CheckResult(
         ok=True, state=None,
-        hints=["网络与安全综合配置完成！Service + NetworkPolicy + Ingress 🔒"],
+        hints=["故障排查命令序列正确！describe + logs 是排查 Pod 故障的标准流程 🔍"],
     )
 
 
 LEVEL_Q28_2 = Level(
     id="Q28.2",
     chapter="ch28",
-    title="网络与安全策略 - Service+NetworkPolicy+Ingress",
+    title="故障排查挑战 - CrashLoopBackOff",
     description="""
-# CKA 模拟 - 网络与安全策略 🔒
+# CKA 挑战 - 故障排查 🔍
 
-**综合考核**：配置 Service、NetworkPolicy 和 Ingress 实现网络路由与安全隔离。
+**核心考核**：使用 kubectl 命令排查 Pod CrashLoopBackOff 故障。
+
+## 场景
+
+一个 Pod 一直处于 CrashLoopBackOff 状态。你需要写出排查命令序列：
+1. 查看 Pod 详细信息（Events、错误信息）
+2. 查看容器日志（应用输出）
+3. 查看上次崩溃时的日志（关键！）
 
 ## 任务
 
-创建多文档 YAML 包含：
-1. **Service**（名称 `api-svc`）
-   - selector: {app: api}
-   - port: 8080, targetPort: 8080
-2. **NetworkPolicy**（名称 `api-network-policy`）
-   - podSelector: {app: api}
-   - policyTypes: [Ingress]
-   - ingress: 只允许 app=frontend 的 Pod 访问 8080 端口
-3. **Ingress**（名称 `api-ingress`）
-   - 规则: host `api.example.com`, 路径 `/` 路由到 `api-svc:8080`
+写出排查 CrashLoopBackOff 的 kubectl 命令序列：
+- `kubectl describe pod` 查看 Pod 事件
+- `kubectl logs` 查看容器日志
+- `kubectl logs --previous` 查看上次崩溃日志
 
 ## 提示
 
-```yaml
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: api-svc
-spec:
-  selector:
-    app: api
-  ports:
-  - port: 8080
-    targetPort: 8080
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: api-network-policy
-spec:
-  podSelector:
-    matchLabels:
-      app: api
-  policyTypes:
-  - Ingress
-  ingress:
-  - from:
-    - podSelector:
-        matchLabels:
-          app: frontend
-    ports:
-    - protocol: TCP
-      port: 8080
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: api-ingress
-spec:
-  rules:
-  - host: api.example.com
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: api-svc
-            port:
-              number: 8080
+```bash
+# 查看 Pod 详细状态和事件
+kubectl describe pod <pod-name>
+
+# 查看当前容器日志
+kubectl logs <pod-name>
+
+# 查看上次崩溃时的日志（关键！）
+kubectl logs <pod-name> --previous
 ```
 """,
     starter_yaml="""\
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: api-svc
-spec:
-  # 添加 selector 和 ports
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: api-network-policy
-spec:
-  # 添加 podSelector, policyTypes, ingress
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: api-ingress
-spec:
-  # 添加 rules
+# 输入排查 CrashLoopBackOff 的 kubectl 命令序列
+# 1. kubectl describe pod <pod-name>
+# 2. kubectl logs <pod-name>
+# 3. kubectl logs <pod-name> --previous
 """,
-    check_fn=_check_282_network_security,
+    check_fn=_check_282_troubleshoot,
     lesson=Lesson(
         concept="""\
-## CKA 网络与安全策略
+## CKA 故障排查方法论
 
-CKA 考试中，网络配置是高频考点。需要综合运用 Service、NetworkPolicy 和 Ingress。
+CKA 考试中约 30% 的题目涉及故障排查。掌握系统化的排查方法论至关重要。
 
-### 三者关系
+### CrashLoopBackOff 排查流程
 
 ```
-外部用户 → Ingress (域名路由) → Service (负载均衡) → Pod
-                                    ↑
-                          NetworkPolicy (流量控制)
-                          只允许特定 Pod 访问
+kubectl get pods           -> 确认 Pod 状态
+       |
+       v
+kubectl describe pod       -> 查看 Events（拉取镜像失败？启动命令错误？）
+       |
+       v
+kubectl logs               -> 查看当前日志（应用是否启动？）
+       |
+       v
+kubectl logs --previous    -> 查看上次崩溃日志（关键！崩溃前输出了什么？）
+       |
+       v
+kubectl exec               -> 进入容器调试（如果容器还活着）
 ```
 
-### NetworkPolicy 要点
+### kubectl describe - 查看 Pod 详情
 
-1. **默认拒绝**：创建 NetworkPolicy 后，未匹配的流量默认被拒绝
-2. **podSelector**：选择受保护的 Pod
-3. **ingress/egress**：入站/出站规则
-4. **policyTypes**：指定策略类型（Ingress/Egress）
+`kubectl describe pod` 是排查的第一步，它会显示：
 
-### Ingress 要点
+```bash
+kubectl describe pod <pod-name>
+```
 
-1. **host**：域名匹配
-2. **paths**：路径路由
-3. **pathType**：Prefix（前缀匹配）/ Exact（精确匹配）
-4. **backend**：后端 Service
+关键信息：
+- **Events 部分**：记录了 Pod 的生命周期事件
+  - `Pulling image` / `Pulled` -> 镜像拉取状态
+  - `Created container` / `Started container` -> 容器启动状态
+  - `Back-off restarting failed container` -> CrashLoopBackOff
+- **State 部分**：当前容器状态（Waiting/Running/Terminated）
+- **Last State 部分**：上次终止原因（Exit Code、Reason）
+  - Exit Code 0 -> 正常退出
+  - Exit Code 1 -> 应用错误
+  - Exit Code 137 -> OOMKilled（内存不足被杀）
+  - Exit Code 139 -> Segmentation Fault
 
-### CKA 常见网络考题
+### kubectl logs - 查看容器日志
 
-- 创建 NetworkPolicy 限制 Pod 间通信
-- 配置 Ingress 实现域名路由
-- 排查 Service 无法访问的问题
-- 理解 ClusterIP / NodePort / LoadBalancer 的区别
+```bash
+# 查看当前日志
+kubectl logs <pod-name>
+
+# 查看指定容器日志（多容器 Pod）
+kubectl logs <pod-name> -c <container-name>
+
+# 查看上次崩溃时的日志（CrashLoopBackOff 必用！）
+kubectl logs <pod-name> --previous
+
+# 实时跟踪日志
+kubectl logs <pod-name> -f
+
+# 查看最近 20 行
+kubectl logs <pod-name> --tail=20
+
+# 查看最近 1 小时的日志
+kubectl logs <pod-name> --since=1h
+```
+
+### 常见 Pod 故障状态及排查
+
+| 状态 | 可能原因 | 排查命令 |
+|------|----------|----------|
+| Pending | 资源不足/调度失败/PVC 未绑定 | `kubectl describe pod` -> Events |
+| CrashLoopBackOff | 容器启动失败/命令错误/应用异常 | `kubectl logs --previous` |
+| ImagePullBackOff | 镜像名错误/仓库不可达/无权限 | `kubectl describe pod` -> Events |
+| ErrImagePull | 镜像不存在 | 检查镜像名和 Tag |
+| OOMKilled | 内存 limit 太小 | `kubectl describe pod` -> Last State Exit Code 137 |
+| Running 但 NotReady | 健康检查失败 | `kubectl describe pod` -> Events |
+
+### kubectl exec - 进入容器调试
+
+```bash
+# 进入容器 shell
+kubectl exec -it <pod-name> -- /bin/sh
+
+# 指定容器（多容器 Pod）
+kubectl exec -it <pod-name> -c <container> -- /bin/sh
+
+# 执行单条命令
+kubectl exec <pod-name> -- env
+kubectl exec <pod-name> -- ls /app
+kubectl exec <pod-name> -- cat /etc/config/app.conf
+```
 """,
         key_fields=[
-            {"name": "Service.selector", "description": "匹配后端 Pod", "required": True, "example": "{app: api}"},
-            {"name": "NetworkPolicy.podSelector", "description": "受保护的 Pod", "required": True, "example": "{matchLabels: {app: api}}"},
-            {"name": "NetworkPolicy.ingress", "description": "入站规则", "required": True, "example": "[{from: [{podSelector: {matchLabels: {app: frontend}}}]}]"},
-            {"name": "Ingress.rules", "description": "域名和路径路由规则", "required": True, "example": "[{host: api.example.com, http: {paths: [...]}}]"},
+            {"name": "kubectl describe pod", "description": "查看 Pod 详细信息、Events、Last State", "required": True, "example": "kubectl describe pod my-app-xxx-yyy"},
+            {"name": "kubectl logs", "description": "查看容器日志输出", "required": True, "example": "kubectl logs my-app-xxx-yyy"},
+            {"name": "kubectl logs --previous", "description": "查看上次崩溃时的日志（CrashLoopBackOff 排查关键）", "required": False, "example": "kubectl logs my-app-xxx-yyy --previous"},
+            {"name": "kubectl exec", "description": "进入容器调试", "required": False, "example": "kubectl exec -it my-app -- /bin/sh"},
+            {"name": "Exit Code", "description": "describe 中的退出码提示崩溃原因", "required": False, "example": "137=OOMKilled, 1=应用错误"},
         ],
         diagram="""\
-  网络与安全综合架构
+  CrashLoopBackOff 排查流程
 
-  外部用户
-      │
-      ▼
-  ┌──────────────────────────────────┐
-  │  Ingress (api-ingress)           │
-  │  host: api.example.com           │
-  │  path: / → api-svc:8080          │
-  └──────────────┬───────────────────┘
-                 │
-                 ▼
-  ┌──────────────────────────────────┐
-  │  Service (api-svc)               │
-  │  selector: {app: api}            │
-  │  port: 8080                      │
-  └──────────────┬───────────────────┘
-                 │
-  ┌──────────────┼──────────────────┐
-  │              │                   │
-  │  ┌───────────┴──────────────┐   │
-  │  │  NetworkPolicy            │   │
-  │  │  podSelector: {app: api}  │   │
-  │  │  ingress:                 │   │
-  │  │    from: {app: frontend}  │   │
-  │  │    port: 8080             │   │
-  │  └───────────┬──────────────┘   │
-  │              │                   │
-  │  ┌───────────▼──────────────┐   │
-  │  │  Pod (app: api)          │   │
-  │  │  只接受 frontend 的请求   │   │
-  │  └──────────────────────────┘   │
-  └──────────────────────────────────┘
+  ┌──────────────────────────────────────────────────────────────┐
+  │  故障现象: Pod CrashLoopBackOff                              │
+  │                                                              │
+  │  $ kubectl get pods                                         │
+  │  NAME       READY   STATUS             RESTARTS   AGE       │
+  │  my-app-0   0/1     CrashLoopBackOff   5          3m        │
+  └──────────────────────────┬───────────────────────────────────┘
+                             │
+                             v
+  ┌──────────────────────────────────────────────────────────────┐
+  │  步骤 1: kubectl describe pod                                │
+  │                                                              │
+  │  $ kubectl describe pod my-app-0                            │
+  │                                                              │
+  │  关键信息:                                                   │
+  │  ┌────────────────────────────────────────────┐              │
+  │  │ State:          Waiting                    │              │
+  │  │   Reason:       CrashLoopBackOff           │              │
+  │  │ Last State:     Terminated                 │              │
+  │  │   Reason:       Error                      │              │
+  │  │   Exit Code:    1                          │              │
+  │  │   Started:      Mon, 10 Jan ...            │              │
+  │  │   Finished:     Mon, 10 Jan ...            │              │
+  │  └────────────────────────────────────────────┘              │
+  │  Events:                                                     │
+  │  ┌────────────────────────────────────────────┐              │
+  │  │ Back-off restarting failed container       │              │
+  │  │ Error: failed to start container           │              │
+  │  └────────────────────────────────────────────┘              │
+  └──────────────────────────┬───────────────────────────────────┘
+                             │
+                             v
+  ┌──────────────────────────────────────────────────────────────┐
+  │  步骤 2: kubectl logs                                        │
+  │                                                              │
+  │  $ kubectl logs my-app-0                                    │
+  │  -> 查看当前容器日志（可能为空，因为容器刚启动就崩溃了）     │
+  └──────────────────────────┬───────────────────────────────────┘
+                             │
+                             v
+  ┌──────────────────────────────────────────────────────────────┐
+  │  步骤 3: kubectl logs --previous  <- 关键！                  │
+  │                                                              │
+  │  $ kubectl logs my-app-0 --previous                         │
+  │  -> 查看上次崩溃前的日志（通常包含错误信息）                 │
+  │  例如:                                                       │
+  │    "FATAL: Cannot connect to database at localhost:3306"    │
+  │    "Error: config file /etc/app/config.yaml not found"      │
+  │    "panic: runtime error: invalid memory address"           │
+  └──────────────────────────┬───────────────────────────────────┘
+                             │
+                             v
+  ┌──────────────────────────────────────────────────────────────┐
+  │  根据日志修复问题                                            │
+  │  -> 修正数据库连接配置                                       │
+  │  -> 挂载 ConfigMap                                           │
+  │  -> 修正启动命令                                             │
+  │  -> 增加 memory limit                                        │
+  └──────────────────────────────────────────────────────────────┘
 """,
         example_yaml="""\
----                                          # 文档分隔
-apiVersion: v1                               # Service API
-kind: Service                                # 资源类型
-metadata:                                    # 元数据
-  name: api-svc                              # Service 名称
-spec:                                        # 规格
-  selector:                                  # 标签选择器
-    app: api                                 # 匹配 app=api
-  ports:                                     # 端口映射
-  - port: 8080                               # Service 端口
-    targetPort: 8080                         # Pod 端口
----                                          # 文档分隔
-apiVersion: networking.k8s.io/v1             # NetworkPolicy API
-kind: NetworkPolicy                          # 资源类型
-metadata:                                    # 元数据
-  name: api-network-policy                   # NP 名称
-spec:                                        # 规格
-  podSelector:                               # 保护的 Pod
-    matchLabels:
-      app: api                               # 匹配 app=api
-  policyTypes:                               # 策略类型
-  - Ingress                                  # 入站控制
-  ingress:                                   # 入站规则
-  - from:                                    # 允许的来源
-    - podSelector:                           # 来自特定 Pod
-        matchLabels:
-          app: frontend                      # 只允许 frontend
-    ports:                                   # 允许的端口
-    - protocol: TCP
-      port: 8080
----                                          # 文档分隔
-apiVersion: networking.k8s.io/v1             # Ingress API
-kind: Ingress                                # 资源类型
-metadata:                                    # 元数据
-  name: api-ingress                          # Ingress 名称
-spec:                                        # 规格
-  rules:                                     # 路由规则
-  - host: api.example.com                    # 域名
-    http:                                    # HTTP 路由
-      paths:                                 # 路径列表
-      - path: /                              # 路径
-        pathType: Prefix                     # 前缀匹配
-        backend:                             # 后端服务
-          service:
-            name: api-svc                    # Service 名
-            port:
-              number: 8080                   # Service 端口
+# === CrashLoopBackOff 排查命令序列 ===
+
+# 步骤 1: 确认 Pod 状态
+kubectl get pods
+
+# 步骤 2: 查看 Pod 详细信息和事件
+kubectl describe pod my-app-0
+# 重点关注:
+#   - State / Last State / Exit Code
+#   - Events 中的错误信息
+
+# 步骤 3: 查看当前容器日志
+kubectl logs my-app-0
+
+# 步骤 4: 查看上次崩溃时的日志（关键！）
+kubectl logs my-app-0 --previous
+
+# 步骤 5: 如果容器还在运行，进入调试
+kubectl exec -it my-app-0 -- /bin/sh
+
+# 步骤 6: 查看集群事件
+kubectl get events --sort-by=.metadata.creationTimestamp
 """,
         common_errors=[
-            "NetworkPolicy 的 podSelector 不匹配需要保护的 Pod",
-            "Ingress backend 的 service name 与 Service 名称不一致",
-            "NetworkPolicy ingress 中忘记指定 ports",
-            "Ingress pathType 写错（K8s 1.19+ 必须指定 pathType）",
+            "只看 kubectl logs 不看 kubectl logs --previous，错过崩溃前的关键日志",
+            "不看 kubectl describe 的 Events 部分，遗漏调度或镜像拉取错误",
+            "忽略 Last State 的 Exit Code，不知道崩溃原因（如 137=OOMKilled）",
+            "忘记 -c 指定容器名（多容器 Pod 中 logs 默认看第一个容器）",
+            "describe 后不看 Events 只看 spec 配置",
         ],
         tips=[
-            "CKA 考试中 NetworkPolicy 是必考题，务必熟练",
-            "用 kubectl get networkpolicy 查看 NP 规则",
-            "排查网络问题时先检查 NetworkPolicy 再检查 Service selector",
+            "`kubectl logs --previous` 是排查 CrashLoopBackOff 的利器，必用！",
+            "Exit Code 137 = OOMKilled，需要增加 memory limit",
+            "Exit Code 1 = 应用错误，需要看日志确认具体原因",
+            "用 `kubectl get events --sort-by=.metadata.creationTimestamp` 查看集群事件",
+            "多容器 Pod 要用 `-c <container>` 指定容器名",
         ],
     ),
 )
 
 
-# ==================== Q28.3 存储与配置 ====================
+# ==================== Q28.3 网络排查挑战 ====================
 
-def _check_283_storage_config(user_yaml: str) -> CheckResult:
-    """Q28.3 PVC + ConfigMap + Secret 综合配置"""
-    try:
-        docs = _parse_yaml_docs(user_yaml)
-    except yaml.YAMLError as e:
-        return CheckResult(ok=False, error=f"YAML 解析失败: {e}", hints=[])
+def _check_283_network_debug(user_input: str) -> CheckResult:
+    """Q28.3 验证排查 Service 连通性的 kubectl 命令序列"""
+    text = user_input.strip()
 
-    if not docs:
+    if not text:
         return CheckResult(
             ok=False,
-            error="YAML 为空或格式错误",
-            hints=["你需要编写多文档 YAML"],
+            error="请输入 kubectl 网络排查命令序列",
+            hints=["排查 Service 连通性需要 kubectl get endpoints 和 kubectl exec curl"],
         )
 
-    pvc_doc = None
-    cm_doc = None
-    secret_doc = None
-    pod_doc = None
-    for doc in docs:
-        if not isinstance(doc, dict):
-            continue
-        kind = doc.get("kind", "")
-        if kind == "PersistentVolumeClaim" and pvc_doc is None:
-            pvc_doc = doc
-        elif kind == "ConfigMap" and cm_doc is None:
-            cm_doc = doc
-        elif kind == "Secret" and secret_doc is None:
-            secret_doc = doc
-        elif kind == "Pod" and pod_doc is None:
-            pod_doc = doc
+    lower = text.lower()
 
-    if not pvc_doc:
+    # 检查包含 kubectl
+    if "kubectl" not in lower:
         return CheckResult(
             ok=False,
-            error="缺少 PersistentVolumeClaim",
-            hints=["创建一个 PVC 申请存储"],
+            error="命令中缺少 kubectl",
+            hints=["使用 kubectl get endpoints 和 kubectl exec 排查网络"],
         )
 
-    pvc_spec = pvc_doc.get("spec", {})
-    if not isinstance(pvc_spec, dict):
-        return CheckResult(ok=False, error="PVC 缺少 spec", hints=[])
-    if not pvc_spec.get("resources", {}).get("requests", {}).get("storage"):
+    # 检查 get endpoints（查看 Service 后端）
+    has_endpoints = "endpoints" in lower or "get ep" in lower
+    if not has_endpoints:
         return CheckResult(
             ok=False,
-            error="PVC 缺少 resources.requests.storage",
-            hints=["指定存储大小，如 1Gi"],
+            error="缺少 kubectl get endpoints 命令（查看 Service 后端 Pod）",
+            hints=["使用 kubectl get endpoints <svc-name> 检查 Service 是否有后端 Pod"],
         )
 
-    if not cm_doc:
+    # 检查 exec（进入容器测试连通性）
+    has_exec = "exec" in lower
+    if not has_exec:
         return CheckResult(
             ok=False,
-            error="缺少 ConfigMap",
-            hints=["创建一个 ConfigMap 存储应用配置"],
+            error="缺少 kubectl exec 命令（进入容器测试连通性）",
+            hints=["使用 kubectl exec -it <pod> -- curl <service-ip> 测试网络连通性"],
         )
 
-    cm_data = cm_doc.get("data")
-    if not isinstance(cm_data, dict) or not cm_data:
+    # 检查 curl 或 wget（实际测试连通性）
+    has_curl = "curl" in lower or "wget" in lower
+    if not has_curl:
         return CheckResult(
             ok=False,
-            error="ConfigMap 缺少 data",
-            hints=["在 data 中添加配置项"],
-        )
-
-    if not secret_doc:
-        return CheckResult(
-            ok=False,
-            error="缺少 Secret",
-            hints=["创建一个 Secret 存储敏感信息"],
-        )
-
-    secret_data = secret_doc.get("data")
-    if not isinstance(secret_data, dict) or not secret_data:
-        return CheckResult(
-            ok=False,
-            error="Secret 缺少 data",
-            hints=["在 data 中添加 base64 编码的敏感数据"],
-        )
-
-    if not pod_doc:
-        return CheckResult(
-            ok=False,
-            error="缺少 Pod（需要挂载 PVC、ConfigMap 和 Secret）",
-            hints=["创建一个 Pod 使用以上资源"],
-        )
-
-    # 检查 Pod 是否使用了 PVC
-    pod_spec = pod_doc.get("spec", {})
-    if not isinstance(pod_spec, dict):
-        return CheckResult(ok=False, error="Pod 缺少 spec", hints=[])
-
-    volumes = pod_spec.get("volumes", [])
-    has_pvc = False
-    has_cm = False
-    has_secret = False
-    if isinstance(volumes, list):
-        for v in volumes:
-            if not isinstance(v, dict):
-                continue
-            if v.get("persistentVolumeClaim"):
-                has_pvc = True
-            if v.get("configMap"):
-                has_cm = True
-            if v.get("secret"):
-                has_secret = True
-
-    if not has_pvc:
-        return CheckResult(
-            ok=False,
-            error="Pod 未挂载 PVC",
-            hints=["在 volumes 中添加 persistentVolumeClaim"],
-        )
-    if not has_cm:
-        return CheckResult(
-            ok=False,
-            error="Pod 未挂载 ConfigMap",
-            hints=["在 volumes 中添加 configMap"],
-        )
-    if not has_secret:
-        return CheckResult(
-            ok=False,
-            error="Pod 未挂载 Secret",
-            hints=["在 volumes 中添加 secret"],
+            error="缺少 curl 或 wget 命令（实际测试网络连通性）",
+            hints=["在容器内用 curl <service-name>:<port> 测试 Service 连通性"],
         )
 
     return CheckResult(
         ok=True, state=None,
-        hints=["存储与配置综合完成！PVC + ConfigMap + Secret + Pod 💾"],
+        hints=["网络排查命令序列正确！get endpoints + exec curl 是排查 Service 连通性的标准方法 🌐"],
     )
 
 
 LEVEL_Q28_3 = Level(
     id="Q28.3",
     chapter="ch28",
-    title="存储与配置 - PVC+ConfigMap+Secret",
+    title="网络排查挑战 - Service 连通性",
     description="""
-# CKA 模拟 - 存储与配置 💾
+# CKA 挑战 - 网络排查 🌐
 
-**综合考核**：创建 PVC、ConfigMap、Secret 并在 Pod 中挂载使用。
+**核心考核**：使用 kubectl 命令排查 Service 连通性问题。
+
+## 场景
+
+一个 Service 创建后无法访问后端 Pod。你需要写出排查命令序列：
+1. 查看 Service 的 Endpoints 是否正常
+2. 进入容器用 curl 测试 Service 连通性
+3. 检查 DNS 解析是否正常
 
 ## 任务
 
-创建多文档 YAML 包含：
-1. **PVC**（名称 `data-pvc`）
-   - accessModes: [ReadWriteOnce]
-   - resources.requests.storage: 1Gi
-2. **ConfigMap**（名称 `app-config`）
-   - data: {APP_MODE: "production", LOG_LEVEL: "info"}
-3. **Secret**（名称 `db-secret`）
-   - data: {password: cGFzc3dvcmQxMjM=}  (base64 of "password123")
-4. **Pod**（名称 `app-pod`）
-   - 容器 `app`，镜像 `nginx:1.25`
-   - 挂载 PVC 到 `/data`
-   - 挂载 ConfigMap 到 `/etc/config`
-   - 挂载 Secret 到 `/etc/secret`
+写出排查 Service 连通性的 kubectl 命令序列：
+- `kubectl get endpoints` 检查 Service 后端
+- `kubectl exec` 进入容器
+- `curl` 测试连通性
 
 ## 提示
 
-```yaml
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: data-pvc
-spec:
-  accessModes: [ReadWriteOnce]
-  resources:
-    requests:
-      storage: 1Gi
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: app-config
-data:
-  APP_MODE: "production"
-  LOG_LEVEL: "info"
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: db-secret
-type: Opaque
-data:
-  password: cGFzc3dvcmQxMjM=
----
-apiVersion: v1
-kind: Pod
-metadata:
-  name: app-pod
-spec:
-  containers:
-  - name: app
-    image: nginx:1.25
-    volumeMounts:
-    - name: data
-      mountPath: /data
-    - name: config
-      mountPath: /etc/config
-    - name: secret
-      mountPath: /etc/secret
-  volumes:
-  - name: data
-    persistentVolumeClaim:
-      claimName: data-pvc
-  - name: config
-    configMap:
-      name: app-config
-  - name: secret
-    secret:
-      secretName: db-secret
+```bash
+# 查看 Service 的 Endpoints
+kubectl get endpoints <svc-name>
+
+# 进入容器测试连通性
+kubectl exec -it <pod-name> -- curl http://<svc-name>:<port>
+
+# 测试 DNS 解析
+kubectl exec -it <pod-name> -- nslookup <svc-name>
 ```
 """,
     starter_yaml="""\
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: data-pvc
-spec:
-  # 添加 accessModes 和 resources
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: app-config
-data:
-  # 添加配置项
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: db-secret
-data:
-  # 添加 base64 编码数据
----
-apiVersion: v1
-kind: Pod
-metadata:
-  name: app-pod
-spec:
-  containers:
-  - name: app
-    image: nginx:1.25
-    # 添加 volumeMounts
-  # 添加 volumes (PVC + ConfigMap + Secret)
+# 输入排查 Service 连通性的 kubectl 命令序列
+# 1. kubectl get endpoints <svc-name>
+# 2. kubectl exec -it <pod> -- curl <svc-name>:<port>
 """,
-    check_fn=_check_283_storage_config,
+    check_fn=_check_283_network_debug,
     lesson=Lesson(
         concept="""\
-## CKA 存储与配置
+## CKA 网络排查方法论
 
-CKA 考试中，存储和配置管理是核心考点。需要综合运用 PVC、ConfigMap 和 Secret。
+Service 无法访问是 CKA 考试中的高频题型。掌握系统化的排查方法至关重要。
 
-### 资源关系
+### Service 连通性排查流程
 
 ```
-Pod
-├── volumeMounts → 挂载到容器内路径
-│   ├── PVC (持久化存储)
-│   ├── ConfigMap (配置文件)
-│   └── Secret (敏感数据)
+kubectl get svc             -> 确认 Service 存在，查看 ClusterIP
+       |
+       v
+kubectl get endpoints       -> 检查 Endpoints 是否有后端 Pod
+       |
+       v
+  +-- Endpoints 为空        -> selector 不匹配 / Pod 未 Ready
+  +-- Endpoints 有 Pod       -> 继续排查
+       |
+       v
+kubectl exec -- curl        -> 在容器内测试 Service 连通性
+       |
+       v
+kubectl exec -- nslookup    -> 测试 DNS 解析
+       |
+       v
+kubectl get networkpolicy   -> 检查 NetworkPolicy 是否阻断
 ```
 
-### PVC 要点
+### kubectl get endpoints - 检查 Service 后端
 
-1. **accessModes**：ReadWriteOnce / ReadOnlyMany / ReadWriteMany
-2. **storageClassName**：指定 StorageClass（可省略用默认）
-3. **resources.requests.storage**：申请容量
-
-### ConfigMap vs Secret
-
-| 特性 | ConfigMap | Secret |
-|------|-----------|--------|
-| 数据类型 | 明文 | base64 编码 |
-| 用途 | 配置文件 | 密码/证书 |
-| 挂载方式 | volume/env | volume/env |
-| 大小限制 | 1MB | 1MB |
-
-### 常用 kubectl 命令
+Service 通过 selector 选择后端 Pod，匹配的 Pod IP 会出现在 Endpoints 中：
 
 ```bash
-kubectl get pvc                          # 查看 PVC
-kubectl get configmap                    # 查看 ConfigMap
-kubectl get secrets                      # 查看 Secret
-kubectl describe pod <pod>               # 查看 Pod 挂载详情
-echo -n 'password' | base64              # 生成 Secret 数据
-echo 'cGFzc3dvcmQ=' | base64 --decode    # 解码 Secret
+# 查看 Service 的 Endpoints
+kubectl get endpoints <svc-name>
+
+# 输出示例（正常）:
+# NAME         ENDPOINTS                           AGE
+# nginx-svc    10.244.1.5:80,10.244.2.3:80        5m
+
+# 输出示例（异常 - 无 Endpoints）:
+# NAME         ENDPOINTS                           AGE
+# nginx-svc    <none>                              5m
 ```
+
+**Endpoints 为空的常见原因：**
+1. Service selector 与 Pod labels 不匹配
+2. Pod 未通过 readinessProbe（NotReady 状态不加入 Endpoints）
+3. targetPort 与 containerPort 不匹配
+
+### kubectl exec + curl - 测试连通性
+
+```bash
+# 进入容器测试 Service 连通性
+kubectl exec -it <pod-name> -- curl http://<svc-name>:<port>
+
+# 使用 ClusterIP 测试
+kubectl exec -it <pod-name> -- curl http://10.96.0.100:80
+
+# 测试 DNS 解析
+kubectl exec -it <pod-name> -- nslookup <svc-name>
+kubectl exec -it <pod-name> -- nslookup <svc-name>.<namespace>.svc.cluster.local
+
+# 测试跨命名空间访问
+kubectl exec -it <pod-name> -- curl http://<svc-name>.<namespace>:<port>
+
+# 使用 busybox 调试 Pod（如果没有可用的容器）
+kubectl run debug --image=busybox --rm -it --restart=Never -- sh
+# 然后在容器内:
+#   wget -qO- http://<svc-name>:<port>
+#   nslookup <svc-name>
+```
+
+### NetworkPolicy 排查
+
+如果 Endpoints 正常但 curl 失败，可能是 NetworkPolicy 阻断了流量：
+
+```bash
+# 查看命名空间中的 NetworkPolicy
+kubectl get networkpolicy
+
+# 查看 NetworkPolicy 详情
+kubectl describe networkpolicy <np-name>
+
+# 临时删除 NetworkPolicy 测试
+kubectl delete networkpolicy <np-name>
+```
+
+### 常见网络故障
+
+| 症状 | 可能原因 | 排查方法 |
+|------|----------|----------|
+| Endpoints 为空 | selector 不匹配 | 对比 svc selector 和 pod labels |
+| curl 连接被拒 | targetPort 错误 | 检查 targetPort = containerPort |
+| DNS 解析失败 | CoreDNS 异常 | `kubectl get pods -n kube-system -l k8s-app=kube-dns` |
+| 超时 | NetworkPolicy 阻断 | `kubectl get networkpolicy` |
+| 偶尔不通 | Pod 不健康 | 检查 readinessProbe |
 """,
         key_fields=[
-            {"name": "PVC.spec.accessModes", "description": "访问模式", "required": True, "example": "[ReadWriteOnce]"},
-            {"name": "PVC.spec.resources.requests.storage", "description": "存储容量", "required": True, "example": "1Gi"},
-            {"name": "ConfigMap.data", "description": "配置数据（明文）", "required": True, "example": "{APP_MODE: production}"},
-            {"name": "Secret.data", "description": "敏感数据（base64 编码）", "required": True, "example": "{password: cGFzc3dvcmQxMjM=}"},
-            {"name": "Pod.spec.volumes", "description": "卷定义，引用 PVC/CM/Secret", "required": True, "example": "[{name: data, persistentVolumeClaim: {claimName: data-pvc}}]"},
+            {"name": "kubectl get endpoints", "description": "查看 Service 后端 Pod IP 列表，为空说明 selector 不匹配", "required": True, "example": "kubectl get endpoints nginx-svc"},
+            {"name": "kubectl exec", "description": "进入容器执行命令测试连通性", "required": True, "example": "kubectl exec -it my-pod -- curl http://nginx-svc:80"},
+            {"name": "curl / wget", "description": "在容器内测试 HTTP 连通性", "required": True, "example": "curl http://nginx-svc:80"},
+            {"name": "nslookup", "description": "测试 DNS 解析是否正常", "required": False, "example": "nslookup nginx-svc"},
+            {"name": "kubectl get networkpolicy", "description": "检查是否有 NetworkPolicy 阻断流量", "required": False, "example": "kubectl get networkpolicy"},
         ],
         diagram="""\
-  存储与配置综合架构
+  Service 连通性排查流程
 
-  ┌────────────────── Pod (app-pod) ──────────────────┐
-  │                                                    │
-  │  Container: app (nginx:1.25)                       │
-  │  ┌──────────────────────────────────────────┐      │
-  │  │ volumeMounts:                            │      │
-  │  │  /data       ← volume: data              │      │
-  │  │  /etc/config ← volume: config            │      │
-  │  │  /etc/secret ← volume: secret            │      │
-  │  └──────────────────────────────────────────┘      │
-  │                                                    │
-  │  volumes:                                          │
-  │  ┌──────────┐ ┌──────────────┐ ┌──────────────┐   │
-  │  │ data     │ │ config       │ │ secret       │   │
-  │  │ (PVC)    │ │ (ConfigMap)  │ │ (Secret)     │   │
-  │  └────┬─────┘ └──────┬───────┘ └──────┬───────┘   │
-  └───────┼──────────────┼────────────────┼───────────┘
-          │              │                │
-          ▼              ▼                ▼
-   ┌─────────────┐ ┌──────────────┐ ┌──────────────┐
-   │ PVC         │ │ ConfigMap    │ │ Secret       │
-   │ data-pvc    │ │ app-config   │ │ db-secret    │
-   │ 1Gi RWO     │ │ APP_MODE     │ │ password:    │
-   │             │ │ LOG_LEVEL    │ │  cGFzc3...   │
-   └─────────────┘ └──────────────┘ └──────────────┘
+  ┌──────────────────────────────────────────────────────────────┐
+  │  故障现象: Service 无法访问                                   │
+  │                                                              │
+  │  $ kubectl get svc                                          │
+  │  NAME        TYPE        CLUSTER-IP      PORT(S)            │
+  │  nginx-svc   ClusterIP   10.96.0.100     80/TCP             │
+  └──────────────────────────┬───────────────────────────────────┘
+                             │
+                             v
+  ┌──────────────────────────────────────────────────────────────┐
+  │  步骤 1: kubectl get endpoints                               │
+  │                                                              │
+  │  $ kubectl get endpoints nginx-svc                          │
+  │                                                              │
+  │  情况 A: 有 Endpoints（正常）                                │
+  │  ┌──────────────────────────────────────────┐               │
+  │  │ 10.244.1.5:80, 10.244.2.3:80            │               │
+  │  └──────────────────────────────────────────┘               │
+  │  -> 继续 step 2                                             │
+  │                                                              │
+  │  情况 B: 无 Endpoints（异常！）                              │
+  │  ┌──────────────────────────────────────────┐               │
+  │  │ <none>                                   │               │
+  │  └──────────────────────────────────────────┘               │
+  │  -> 检查 selector 是否匹配 Pod labels                        │
+  │  -> 检查 Pod 是否 Ready                                      │
+  │  -> 检查 targetPort 是否正确                                 │
+  └──────────────────────────┬───────────────────────────────────┘
+                             │
+                             v
+  ┌──────────────────────────────────────────────────────────────┐
+  │  步骤 2: kubectl exec -- curl                                │
+  │                                                              │
+  │  $ kubectl exec -it my-pod -- curl http://nginx-svc:80      │
+  │                                                              │
+  │  -> 测试 Service 名称 + 端口                                 │
+  │  -> 也可以用 ClusterIP: kubectl exec -it my-pod --           │
+  │    curl http://10.96.0.100:80                               │
+  └──────────────────────────┬───────────────────────────────────┘
+                             │
+                             v
+  ┌──────────────────────────────────────────────────────────────┐
+  │  步骤 3: DNS 解析测试                                        │
+  │                                                              │
+  │  $ kubectl exec -it my-pod -- nslookup nginx-svc            │
+  │  -> 确认 DNS 能解析 Service 名称                             │
+  │  -> 如果失败: 检查 CoreDNS 是否正常运行                      │
+  └──────────────────────────┬───────────────────────────────────┘
+                             │
+                             v
+  ┌──────────────────────────────────────────────────────────────┐
+  │  步骤 4: 检查 NetworkPolicy                                  │
+  │                                                              │
+  │  $ kubectl get networkpolicy                                │
+  │  -> 如果有 NP，检查是否阻断了流量                            │
+  │  -> 临时删除 NP 测试: kubectl delete networkpolicy <name>   │
+  └──────────────────────────────────────────────────────────────┘
 """,
         example_yaml="""\
----                                          # 文档分隔
-apiVersion: v1                               # PVC API
-kind: PersistentVolumeClaim                  # 资源类型
-metadata:                                    # 元数据
-  name: data-pvc                             # PVC 名称
-spec:                                        # 规格
-  accessModes:                               # 访问模式
-  - ReadWriteOnce                            # 单节点读写
-  resources:                                 # 资源请求
-    requests:
-      storage: 1Gi                           # 申请 1Gi
----                                          # 文档分隔
-apiVersion: v1                               # ConfigMap API
-kind: ConfigMap                              # 资源类型
-metadata:                                    # 元数据
-  name: app-config                           # ConfigMap 名称
-data:                                        # 配置数据
-  APP_MODE: "production"                     # 应用模式
-  LOG_LEVEL: "info"                          # 日志级别
----                                          # 文档分隔
-apiVersion: v1                               # Secret API
-kind: Secret                                 # 资源类型
-metadata:                                    # 元数据
-  name: db-secret                            # Secret 名称
-type: Opaque                                 # 通用类型
-data:                                        # base64 编码数据
-  password: cGFzc3dvcmQxMjM=                # password123 的 base64
----                                          # 文档分隔
-apiVersion: v1                               # Pod API
-kind: Pod                                    # 资源类型
-metadata:                                    # 元数据
-  name: app-pod                              # Pod 名称
-spec:                                        # 规格
-  containers:                                # 容器列表
-  - name: app                                # 容器名
-    image: nginx:1.25                        # 镜像
-    volumeMounts:                            # 卷挂载
-    - name: data                             # 挂载 PVC
-      mountPath: /data
-    - name: config                           # 挂载 ConfigMap
-      mountPath: /etc/config
-    - name: secret                           # 挂载 Secret
-      mountPath: /etc/secret
-  volumes:                                   # 卷定义
-  - name: data                               # PVC 卷
-    persistentVolumeClaim:
-      claimName: data-pvc                    # 引用 PVC
-  - name: config                             # ConfigMap 卷
-    configMap:
-      name: app-config                       # 引用 ConfigMap
-  - name: secret                             # Secret 卷
-    secret:
-      secretName: db-secret                  # 引用 Secret
+# === Service 连通性排查命令序列 ===
+
+# 步骤 1: 查看 Service 信息
+kubectl get svc nginx-svc
+
+# 步骤 2: 检查 Endpoints（关键！）
+kubectl get endpoints nginx-svc
+# 如果为空 -> 检查 selector 和 Pod labels
+
+# 步骤 3: 进入容器测试连通性
+kubectl exec -it my-pod -- curl http://nginx-svc:80
+
+# 步骤 4: 测试 DNS 解析
+kubectl exec -it my-pod -- nslookup nginx-svc
+
+# 步骤 5: 检查 NetworkPolicy
+kubectl get networkpolicy
+
+# 步骤 6: 如果没有可用容器，启动调试 Pod
+kubectl run debug --image=busybox --rm -it --restart=Never -- sh
+# 在容器内:
+#   wget -qO- http://nginx-svc:80
+#   nslookup nginx-svc
 """,
         common_errors=[
-            "Secret data 未做 base64 编码（如直接写 password: password123）",
-            "PVC 的 claimName 与 PVC 名称不匹配",
-            "ConfigMap/Secret 的 name 与 volumes 中引用的不一致",
-            "volumeMounts 的 name 与 volumes 的 name 不匹配",
+            "不看 Endpoints 直接 curl，不知道 Service 后端是否正常",
+            "selector 与 Pod labels 不匹配导致 Endpoints 为空（最常见原因）",
+            "Pod 处于 NotReady 状态（readinessProbe 未通过），不加入 Endpoints",
+            "targetPort 与 containerPort 不匹配，curl 连接被拒绝",
+            "忘记检查 NetworkPolicy，流量被策略阻断",
+            "DNS 解析使用短名称但跨命名空间访问时未指定全限定名",
         ],
         tips=[
-            "Secret base64 编码: echo -n 'value' | base64",
-            "PVC 默认使用 default StorageClass，可用 kubectl get sc 查看",
-            "ConfigMap 挂载为文件时，每个 key 变成一个文件",
+            "`kubectl get endpoints <svc>` 是排查 Service 的第一步",
+            "Endpoints 为空则检查 selector；Endpoints 有值但 curl 失败则检查 NetworkPolicy",
+            "用 `kubectl run debug --image=busybox --rm -it -- sh` 快速启动调试容器",
+            "跨命名空间访问要用全限定名: <svc>.<ns>.svc.cluster.local",
+            "CoreDNS 异常会导致所有 Service DNS 解析失败",
         ],
     ),
 )
 
 
-# ==================== Q28.4 集群故障排查 ====================
+# ==================== Q28.4 RBAC 排查挑战 ====================
 
-def _check_284_troubleshoot(user_yaml: str) -> CheckResult:
-    """Q28.4 综合诊断：修复有问题的 Pod 和 Service"""
-    try:
-        docs = _parse_yaml_docs(user_yaml)
-    except yaml.YAMLError as e:
-        return CheckResult(ok=False, error=f"YAML 解析失败: {e}", hints=[])
+def _check_284_rbac_debug(user_input: str) -> CheckResult:
+    """Q28.4 验证检查权限的 kubectl auth can-i 命令"""
+    text = user_input.strip()
 
-    if not docs:
+    if not text:
         return CheckResult(
             ok=False,
-            error="YAML 为空或格式错误",
-            hints=["你需要编写修复后的多文档 YAML"],
+            error="请输入 kubectl RBAC 排查命令",
+            hints=["使用 kubectl auth can-i 命令检查权限"],
         )
 
-    deploy_doc = None
-    svc_doc = None
-    for doc in docs:
-        if not isinstance(doc, dict):
-            continue
-        kind = doc.get("kind", "")
-        if kind == "Deployment" and deploy_doc is None:
-            deploy_doc = doc
-        elif kind == "Service" and svc_doc is None:
-            svc_doc = doc
+    lower = text.lower()
 
-    if not deploy_doc:
+    # 检查包含 kubectl
+    if "kubectl" not in lower:
         return CheckResult(
             ok=False,
-            error="缺少修复后的 Deployment",
-            hints=["提供一个修复后的 Deployment"],
+            error="命令中缺少 kubectl",
+            hints=["使用 kubectl auth can-i 命令检查权限"],
         )
 
-    # 检查 Deployment 是否有正确的 selector 和 template labels 匹配
-    spec = deploy_doc.get("spec", {})
-    if not isinstance(spec, dict):
-        return CheckResult(ok=False, error="Deployment 缺少 spec", hints=[])
-
-    selector = spec.get("selector", {}).get("matchLabels", {})
-    template_labels = spec.get("template", {}).get("metadata", {}).get("labels", {})
-
-    if not isinstance(selector, dict) or not selector:
+    # 检查 auth 子命令
+    if "auth" not in lower:
         return CheckResult(
             ok=False,
-            error="Deployment 缺少 selector.matchLabels",
-            hints=["CKA 修复：添加 selector.matchLabels"],
+            error="命令中缺少 auth 子命令",
+            hints=["使用 kubectl auth can-i 检查权限"],
         )
 
-    if not isinstance(template_labels, dict) or not template_labels:
+    # 检查 can-i
+    if "can-i" not in lower and "can" not in lower:
         return CheckResult(
             ok=False,
-            error="Deployment 缺少 template.metadata.labels",
-            hints=["CKA 修复：添加 template labels"],
+            error="命令中缺少 can-i 子命令",
+            hints=["正确格式: kubectl auth can-i <verb> <resource>"],
         )
 
-    # 检查 selector 和 template labels 是否匹配
-    for k, v in selector.items():
-        if template_labels.get(k) != v:
-            return CheckResult(
-                ok=False,
-                error=f"selector 与 template labels 不匹配: selector[{k}]={v}, template={template_labels.get(k)}",
-                hints=["CKA 修复：确保 selector.matchLabels 与 template labels 一致"],
-            )
-
-    # 检查容器配置
-    pod_spec = spec.get("template", {}).get("spec", {})
-    containers = pod_spec.get("containers", [])
-    if not isinstance(containers, list) or not containers:
-        return CheckResult(
-            ok=False,
-            error="Deployment 缺少 containers",
-            hints=["CKA 修复：添加 containers"],
-        )
-
-    c = containers[0]
-    if not isinstance(c, dict):
-        return CheckResult(ok=False, error="containers[0] 格式错误", hints=[])
-
-    if not c.get("image"):
-        return CheckResult(
-            ok=False,
-            error="容器缺少 image（CKA 修复：添加正确的镜像）",
-            hints=["指定镜像，如 nginx:1.25"],
-        )
-
-    # 检查容器端口
-    has_port = False
-    ports = c.get("ports", [])
-    if isinstance(ports, list) and ports:
-        has_port = True
-
-    # 检查 Service
-    if not svc_doc:
-        return CheckResult(
-            ok=False,
-            error="缺少修复后的 Service",
-            hints=["提供一个修复后的 Service"],
-        )
-
-    svc_spec = svc_doc.get("spec", {})
-    if not isinstance(svc_spec, dict):
-        return CheckResult(ok=False, error="Service 缺少 spec", hints=[])
-
-    # 检查 Service selector 是否匹配 Deployment labels
-    svc_selector = svc_spec.get("selector", {})
-    if not isinstance(svc_selector, dict) or not svc_selector:
-        return CheckResult(
-            ok=False,
-            error="Service 缺少 selector（CKA 修复：添加 selector 匹配 Pod labels）",
-            hints=["Service selector 必须匹配 Deployment 的 template labels"],
-        )
-
-    for k, v in svc_selector.items():
-        if template_labels.get(k) != v:
-            return CheckResult(
-                ok=False,
-                error=f"Service selector 与 Pod labels 不匹配: svc[{k}]={v}, pod={template_labels.get(k)}",
-                hints=["CKA 修复：Service selector 必须匹配 Pod labels"],
-            )
+    # 检查 --as 参数（模拟用户身份）
+    has_as = "--as" in lower
 
     return CheckResult(
         ok=True, state=None,
-        hints=["故障排查完成！selector/labels 匹配 + 正确配置 = 服务恢复 🔍"],
+        hints=["RBAC 权限检查命令正确！auth can-i 是排查权限问题的核心工具 🔐" + ("（还包含 --as 模拟身份）" if has_as else "")],
     )
 
 
 LEVEL_Q28_4 = Level(
     id="Q28.4",
     chapter="ch28",
-    title="集群故障排查 - 综合诊断",
+    title="RBAC 排查挑战 - 权限检查",
     description="""
-# CKA 模拟 - 集群故障排查 🔍
+# CKA 挑战 - RBAC 权限排查 🔐
 
-**综合考核**：诊断并修复一个有问题的 Deployment + Service 配置。
+**核心考核**：使用 kubectl auth can-i 命令检查和排查 RBAC 权限问题。
 
-## 故障场景
+## 场景
 
-一个应用部署后 Pod 一直处于 CrashLoopBackOff 且 Service 没有 Endpoints。经排查发现以下问题：
-1. Deployment 的 selector 与 template labels 不匹配
-2. 容器缺少 image
-3. Service 的 selector 与 Pod labels 不匹配
+一个 ServiceAccount 无法获取 Pod 列表。你需要写出排查命令：
+1. 检查当前用户是否有特定权限
+2. 模拟 ServiceAccount 身份检查权限
+3. 列出所有权限
 
 ## 任务
 
-编写修复后的 Deployment + Service YAML：
-1. **Deployment**（名称 `fixed-app`）
-   - selector.matchLabels 和 template.labels 必须一致: {app: fixed-app}
-   - 容器 `web`，镜像 `nginx:1.25`，端口 80
-   - replicas: 2
-2. **Service**（名称 `fixed-svc`）
-   - selector 必须匹配 Pod labels: {app: fixed-app}
-   - port: 80, targetPort: 80
+写出检查 RBAC 权限的 kubectl 命令：
+- `kubectl auth can-i` 检查权限
+- `--as` 模拟特定用户/ServiceAccount
 
 ## 提示
 
-常见故障排查：
-- selector 与 labels 不匹配 → Pod 无法被管理/发现
-- 容器缺少 image → Pod CrashLoopBackOff
-- Service selector 不匹配 → 无 Endpoints
+```bash
+# 检查当前用户权限
+kubectl auth can-i get pods
 
-```yaml
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: fixed-app
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: fixed-app    # 必须与 template labels 一致
-  template:
-    metadata:
-      labels:
-        app: fixed-app    # 必须与 selector 一致
-    spec:
-      containers:
-      - name: web
-        image: nginx:1.25
-        ports:
-        - containerPort: 80
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: fixed-svc
-spec:
-  selector:
-    app: fixed-app    # 必须匹配 Pod labels
-  ports:
-  - port: 80
-    targetPort: 80
+# 模拟 ServiceAccount 检查权限
+kubectl auth can-i get pods --as=system:serviceaccount:default:app-sa
+
+# 列出所有权限
+kubectl auth can-i --list
 ```
 """,
     starter_yaml="""\
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: fixed-app
-spec:
-  replicas: 2
-  # 修复: selector 必须匹配 template labels
-  selector:
-    matchLabels:
-      app: wrong-app    # BUG: 不匹配
-  template:
-    metadata:
-      labels:
-        app: fixed-app
-    spec:
-      containers:
-      - name: web
-        # 修复: 添加 image
-        ports:
-        - containerPort: 80
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: fixed-svc
-spec:
-  # 修复: selector 必须匹配 Pod labels
-  selector:
-    app: wrong-svc    # BUG: 不匹配
-  ports:
-  - port: 80
-    targetPort: 80
+# 输入 kubectl auth can-i 命令
+# kubectl auth can-i <verb> <resource>
+# kubectl auth can-i <verb> <resource> --as=system:serviceaccount:<ns>:<sa>
 """,
-    check_fn=_check_284_troubleshoot,
+    check_fn=_check_284_rbac_debug,
     lesson=Lesson(
         concept="""\
-## CKA 集群故障排查
+## CKA RBAC 权限排查
 
-CKA 考试中有大量故障排查题。掌握系统化的排查方法论至关重要。
+RBAC（基于角色的访问控制）是 Kubernetes 安全的核心。CKA 考试中经常需要排查权限问题。
 
-### 排查方法论
+### kubectl auth can-i - 权限检查利器
+
+`kubectl auth can-i` 是排查 RBAC 问题最直接的工具：
+
+```bash
+# 检查当前用户是否有 get pods 权限
+kubectl auth can-i get pods
+# 输出: yes / no
+
+# 检查特定权限
+kubectl auth can-i create deployments
+kubectl auth can-i delete pods
+kubectl auth can-i list secrets
+kubectl auth can-i update services
+
+# 模拟特定用户身份检查权限
+kubectl auth can-i get pods --as=system:serviceaccount:default:app-sa
+
+# 模拟用户检查权限
+kubectl auth can-i get pods --as=jane
+
+# 模拟用户 + 命名空间
+kubectl auth can-i get pods --as=system:serviceaccount:default:app-sa -n production
+
+# 列出当前用户的所有权限
+kubectl auth can-i --list
+
+# 列出特定 SA 的所有权限
+kubectl auth can-i --list --as=system:serviceaccount:default:app-sa
+```
+
+### RBAC 排查流程
 
 ```
-1. kubectl get pods -o wide        → Pod 状态和节点
-2. kubectl describe pod <pod>      → Events 和错误信息
-3. kubectl logs <pod>              → 应用日志
-4. kubectl logs <pod> --previous   → 上次崩溃的日志
-5. kubectl get svc                 → Service 状态
-6. kubectl get endpoints <svc>     → Endpoints 是否匹配
-7. kubectl get events              → 集群事件
+kubectl auth can-i <verb> <resource> --as=<user>
+       |
+       v
+  +-- yes -> 权限正常，问题在其他地方
+  +-- no  -> 需要排查 RBAC 配置
+       |
+       v
+kubectl get role,rolebinding -n <ns>
+       |
+       v
+kubectl get clusterrole,clusterrolebinding
+       |
+       v
+kubectl describe role <name> -n <ns>
+kubectl describe rolebinding <name> -n <ns>
+       |
+       v
+  +-- Role rules 正确 -> 检查 RoleBinding 的 subjects
+  +-- Role rules 错误 -> 修正 rules
+  +-- RoleBinding 未绑定 SA -> 修正 subjects
 ```
 
-### 常见 Pod 故障
-
-| 状态 | 原因 | 修复 |
-|------|------|------|
-| Pending | 资源不足/调度失败 | 检查 resources 和节点容量 |
-| CrashLoopBackOff | 容器启动失败 | 检查 image/command/logs |
-| ImagePullBackOff | 镜像拉取失败 | 检查镜像名和仓库权限 |
-| ErrImagePull | 镜像不存在 | 修正镜像名 |
-| OOMKilled | 内存不足 | 增加 memory limits |
-
-### 常见 Service 故障
-
-| 症状 | 原因 | 修复 |
-|------|------|------|
-| 无 Endpoints | selector 不匹配 | 修正 selector 匹配 Pod labels |
-| 连接被拒绝 | targetPort 错误 | 检查 targetPort 匹配 containerPort |
-| DNS 解析失败 | Service 不存在或命名错误 | 检查 Service 名称和命名空间 |
-
-### selector + labels 匹配规则
+### RBAC 四要素
 
 ```
-Deployment:
-  selector.matchLabels  ==  template.metadata.labels  (必须一致)
-
-Service:
-  spec.selector  ⊆  Pod labels  (必须匹配)
+ServiceAccount (身份) -> RoleBinding (绑定) -> Role (权限) -> API 操作
 ```
+
+1. **ServiceAccount**：Pod 的身份标识
+2. **Role**：命名空间级权限规则（ClusterRole 是集群级）
+3. **RoleBinding**：将 Role 绑定到 SA/User/Group
+4. **ClusterRole/ClusterRoleBinding**：集群级权限
+
+### 常用 RBAC 排查命令
+
+```bash
+# 查看 Role 和 RoleBinding
+kubectl get role,rolebinding -n <namespace>
+
+# 查看 ClusterRole 和 ClusterRoleBinding
+kubectl get clusterrole,clusterrolebinding
+
+# 查看 Role 详情（检查 rules）
+kubectl describe role <name> -n <namespace>
+
+# 查看 RoleBinding 详情（检查 roleRef 和 subjects）
+kubectl describe rolebinding <name> -n <namespace>
+
+# 检查特定 SA 的权限
+kubectl auth can-i --list --as=system:serviceaccount:<ns>:<sa>
+
+# 检查 SA 是否可以执行特定操作
+kubectl auth can-i get pods --as=system:serviceaccount:default:app-sa
+kubectl auth can-i create pods --as=system:serviceaccount:default:app-sa
+kubectl auth can-i delete pods --as=system:serviceaccount:default:app-sa
+```
+
+### --as 参数格式
+
+| 身份类型 | --as 格式 | 示例 |
+|----------|-----------|------|
+| 普通用户 | `--as=<username>` | `--as=jane` |
+| ServiceAccount | `--as=system:serviceaccount:<ns>:<sa>` | `--as=system:serviceaccount:default:app-sa` |
+| 组 | `--as-group=<group>` | `--as-group=dev-team` |
 """,
         key_fields=[
-            {"name": "Deployment.selector.matchLabels", "description": "必须与 template labels 完全一致", "required": True, "example": "{app: fixed-app}"},
-            {"name": "Deployment.template.metadata.labels", "description": "Pod 标签，必须与 selector 一致", "required": True, "example": "{app: fixed-app}"},
-            {"name": "containers[].image", "description": "容器镜像，缺失会导致 CrashLoopBackOff", "required": True, "example": "nginx:1.25"},
-            {"name": "Service.selector", "description": "必须匹配 Pod 的 labels", "required": True, "example": "{app: fixed-app}"},
+            {"name": "kubectl auth can-i", "description": "检查是否有特定权限，输出 yes/no", "required": True, "example": "kubectl auth can-i get pods"},
+            {"name": "--as", "description": "模拟特定用户/SA 身份检查权限", "required": False, "example": "--as=system:serviceaccount:default:app-sa"},
+            {"name": "--list", "description": "列出用户的所有权限", "required": False, "example": "kubectl auth can-i --list"},
+            {"name": "kubectl get role/rolebinding", "description": "查看 RBAC 资源", "required": False, "example": "kubectl get role,rolebinding -n default"},
+            {"name": "-n <namespace>", "description": "指定命名空间检查权限", "required": False, "example": "kubectl auth can-i get pods -n production"},
         ],
         diagram="""\
-  故障排查流程
+  RBAC 权限排查流程
 
-  故障现象:
-  ┌─────────────────────────────────────┐
-  │ Pod: CrashLoopBackOff               │
-  │ Service: 无 Endpoints               │
-  └─────────────────────────────────────┘
-           │
-           ▼ 排查
-  ┌─────────────────────────────────────┐
-  │ 问题 1: selector ≠ template labels  │
-  │   selector: {app: wrong-app}        │
-  │   labels:   {app: fixed-app}        │
-  │   → Deployment 无法管理 Pod          │
-  └─────────────────────────────────────┘
-           │
-           ▼ 排查
-  ┌─────────────────────────────────────┐
-  │ 问题 2: 容器缺少 image              │
-  │   → CrashLoopBackOff                │
-  └─────────────────────────────────────┘
-           │
-           ▼ 排查
-  ┌─────────────────────────────────────┐
-  │ 问题 3: Service selector ≠ Pod labels│
-  │   svc selector: {app: wrong-svc}    │
-  │   Pod labels:   {app: fixed-app}    │
-  │   → 无 Endpoints                    │
-  └─────────────────────────────────────┘
-           │
-           ▼ 修复
-  ┌─────────────────────────────────────┐
-  │ 修复后:                              │
-  │   selector = labels = {app: fixed-app}│
-  │   image: nginx:1.25                 │
-  │   svc selector = {app: fixed-app}   │
-  │   → Pod Running, Endpoints 正常     │
-  └─────────────────────────────────────┘
+  ┌──────────────────────────────────────────────────────────────┐
+  │  故障现象: ServiceAccount 无法操作资源                       │
+  │                                                              │
+  │  $ kubectl auth can-i get pods                               │
+  │    --as=system:serviceaccount:default:app-sa                │
+  │  -> no                                                       │
+  └──────────────────────────┬───────────────────────────────────┘
+                             │
+                             v
+  ┌──────────────────────────────────────────────────────────────┐
+  │  步骤 1: 列出所有权限                                        │
+  │                                                              │
+  │  $ kubectl auth can-i --list                                 │
+  │    --as=system:serviceaccount:default:app-sa                │
+  │                                                              │
+  │  -> 查看 SA 当前拥有的所有权限                               │
+  │  -> 确认缺少哪些权限                                        │
+  └──────────────────────────┬───────────────────────────────────┘
+                             │
+                             v
+  ┌──────────────────────────────────────────────────────────────┐
+  │  步骤 2: 查看 RBAC 资源                                      │
+  │                                                              │
+  │  $ kubectl get role,rolebinding -n default                   │
+  │  $ kubectl get clusterrole,clusterrolebinding                │
+  │                                                              │
+  │  -> 查看是否有匹配的 Role/RoleBinding                        │
+  └──────────────────────────┬───────────────────────────────────┘
+                             │
+                             v
+  ┌──────────────────────────────────────────────────────────────┐
+  │  步骤 3: 检查 RoleBinding                                    │
+  │                                                              │
+  │  $ kubectl describe rolebinding <name> -n default            │
+  │                                                              │
+  │  ┌──────────────────────────────────────────┐               │
+  │  │ roleRef:                                 │               │
+  │  │   kind: Role                             │               │
+  │  │   name: pod-reader                       │               │
+  │  │ subjects:                                │               │
+  │  │ - kind: ServiceAccount                   │               │
+  │  │   name: app-sa       <- 是否匹配？        │               │
+  │  └──────────────────────────────────────────┘               │
+  └──────────────────────────┬───────────────────────────────────┘
+                             │
+                             v
+  ┌──────────────────────────────────────────────────────────────┐
+  │  步骤 4: 检查 Role rules                                     │
+  │                                                              │
+  │  $ kubectl describe role pod-reader -n default               │
+  │                                                              │
+  │  ┌──────────────────────────────────────────┐               │
+  │  │ rules:                                  │               │
+  │  │ - apiGroups: [""]                        │               │
+  │  │   resources: ["pods"]  <- 是否包含？      │               │
+  │  │   verbs: ["get", "list"] <- 是否包含？    │               │
+  │  └──────────────────────────────────────────┘               │
+  └──────────────────────────┬───────────────────────────────────┘
+                             │
+                             v
+  ┌──────────────────────────────────────────────────────────────┐
+  │  修复: 创建/修改 Role 和 RoleBinding                         │
+  │  -> 确保 Role rules 包含所需 verbs                           │
+  │  -> 确保 RoleBinding subjects 包含正确的 SA                  │
+  │  -> 验证: kubectl auth can-i get pods --as=...              │
+  └──────────────────────────────────────────────────────────────┘
 """,
         example_yaml="""\
----                                          # 文档分隔
-apiVersion: apps/v1                          # Deployment API
-kind: Deployment                             # 资源类型
-metadata:                                    # 元数据
-  name: fixed-app                            # 名称
-spec:                                        # 规格
-  replicas: 2                                # 副本数
-  selector:                                  # 标签选择器
-    matchLabels:                             # 必须与 template labels 一致
-      app: fixed-app                         # ✅ 已修复
-  template:                                  # Pod 模板
-    metadata:
-      labels:                                # Pod 标签
-        app: fixed-app                       # ✅ 与 selector 一致
-    spec:                                    # Pod 规格
-      containers:                            # 容器列表
-      - name: web                            # 容器名
-        image: nginx:1.25                    # ✅ 已添加 image
-        ports:                               # 端口
-        - containerPort: 80                  # 容器端口
----                                          # 文档分隔
-apiVersion: v1                               # Service API
-kind: Service                                # 资源类型
-metadata:                                    # 元数据
-  name: fixed-svc                            # 名称
-spec:                                        # 规格
-  selector:                                  # 标签选择器
-    app: fixed-app                           # ✅ 匹配 Pod labels
-  ports:                                     # 端口映射
-  - port: 80                                 # Service 端口
-    targetPort: 80                           # Pod 端口
+# === RBAC 权限排查命令序列 ===
+
+# 步骤 1: 检查当前用户权限
+kubectl auth can-i get pods
+
+# 步骤 2: 模拟 ServiceAccount 检查权限
+kubectl auth can-i get pods --as=system:serviceaccount:default:app-sa
+
+# 步骤 3: 列出 SA 的所有权限
+kubectl auth can-i --list --as=system:serviceaccount:default:app-sa
+
+# 步骤 4: 查看 Role 和 RoleBinding
+kubectl get role,rolebinding -n default
+
+# 步骤 5: 查看 RoleBinding 详情
+kubectl describe rolebinding pod-reader-binding -n default
+
+# 步骤 6: 查看 Role 详情
+kubectl describe role pod-reader -n default
+
+# 步骤 7: 查看 ClusterRole
+kubectl get clusterrole | grep pod
+kubectl describe clusterrole <name>
 """,
         common_errors=[
-            "selector.matchLabels 与 template labels 不一致（最常见的 Deployment 错误）",
-            "Service selector 不匹配 Pod labels（导致无 Endpoints）",
-            "容器缺少 image 或 image 名称错误（导致 CrashLoopBackOff）",
-            "targetPort 与 containerPort 不匹配（导致连接被拒绝）",
+            "忘记 --as 参数，检查的是当前用户权限而非目标 SA",
+            "--as 格式错误，正确格式是 system:serviceaccount:<ns>:<sa>",
+            "Role rules 中 apiGroups 核心组写成 ['v1']（应该是空字符串 ''）",
+            "RoleBinding 的 subjects 中 SA 名称或命名空间不匹配",
+            "RoleBinding 绑定了 Role 但 Role 的 rules 缺少所需 verb",
+            "命名空间级别权限用了 ClusterRole 但没创建 ClusterRoleBinding",
         ],
         tips=[
-            "排查 Pod 故障: describe → logs → logs --previous",
-            "排查 Service 故障: get endpoints → 检查 selector",
-            "CKA 考试中故障排查题占 30%+，务必熟练",
+            "`kubectl auth can-i --list --as=<user>` 一次列出所有权限，非常高效",
+            "--as 格式: system:serviceaccount:<namespace>:<sa-name>",
+            "apiGroups 的核心组是空字符串 ''，不是 'v1'",
+            "权限不足时先查 RoleBinding subjects，再查 Role rules",
+            "用 `kubectl auth can-i <verb> <resource> -n <ns>` 检查命名空间级权限",
         ],
     ),
 )
 
 
-# ==================== Q28.5 RBAC 与安全 ====================
+# ==================== Q28.5 综合挑战 ====================
 
-def _check_285_rbac_security(user_yaml: str) -> CheckResult:
-    """Q28.5 RBAC + ServiceAccount + 安全上下文综合配置"""
-    try:
-        docs = _parse_yaml_docs(user_yaml)
-    except yaml.YAMLError as e:
-        return CheckResult(ok=False, error=f"YAML 解析失败: {e}", hints=[])
+def _check_285_comprehensive(user_input: str) -> CheckResult:
+    """Q28.5 综合挑战 - 多步骤 kubectl 操作（命名空间+部署+网络策略+验证）"""
+    text = user_input.strip()
 
-    if not docs:
+    if not text:
         return CheckResult(
             ok=False,
-            error="YAML 为空或格式错误",
-            hints=["你需要编写多文档 YAML"],
+            error="请输入 kubectl 命令序列",
+            hints=["综合挑战需要多个 kubectl 命令完成多步骤操作"],
         )
 
-    sa_doc = None
-    role_doc = None
-    rb_doc = None
-    pod_doc = None
-    for doc in docs:
-        if not isinstance(doc, dict):
-            continue
-        kind = doc.get("kind", "")
-        if kind == "ServiceAccount" and sa_doc is None:
-            sa_doc = doc
-        elif kind == "Role" and role_doc is None:
-            role_doc = doc
-        elif kind == "RoleBinding" and rb_doc is None:
-            rb_doc = doc
-        elif kind == "Pod" and pod_doc is None:
-            pod_doc = doc
+    lower = text.lower()
 
-    if not sa_doc:
+    # 检查包含 kubectl
+    if "kubectl" not in lower:
         return CheckResult(
             ok=False,
-            error="缺少 ServiceAccount",
-            hints=["创建一个 ServiceAccount"],
+            error="命令中缺少 kubectl",
+            hints=["使用多个 kubectl 命令完成综合操作"],
         )
 
-    if not role_doc:
+    # 统计 kubectl 命令数量
+    kubectl_count = lower.count("kubectl")
+
+    # 检查包含创建命名空间
+    has_namespace = "namespace" in lower or "ns " in lower
+    if not has_namespace:
         return CheckResult(
             ok=False,
-            error="缺少 Role",
-            hints=["创建一个 Role 定义权限"],
+            error="缺少创建/使用命名空间的操作",
+            hints=["使用 kubectl create namespace <name> 创建命名空间"],
         )
 
-    # 检查 Role rules
-    role_rules = role_doc.get("rules")
-    if not isinstance(role_rules, list) or not role_rules:
+    # 检查包含部署操作
+    has_deploy = "run" in lower or "apply" in lower or "create deployment" in lower
+    if not has_deploy:
         return CheckResult(
             ok=False,
-            error="Role 缺少 rules",
-            hints=["添加 rules 定义 API 权限"],
+            error="缺少部署应用的操作",
+            hints=["使用 kubectl run 或 kubectl apply 部署应用"],
         )
 
-    rule = role_rules[0]
-    if not isinstance(rule, dict):
-        return CheckResult(ok=False, error="rules[0] 格式错误", hints=[])
-
-    if not rule.get("apiGroups"):
+    # 检查包含验证操作
+    has_verify = "get" in lower
+    if not has_verify:
         return CheckResult(
             ok=False,
-            error="rules[0] 缺少 apiGroups",
-            hints=["指定 apiGroups，如 [''] 或 ['apps']"],
+            error="缺少验证操作（kubectl get）",
+            hints=["使用 kubectl get pods/svc 验证部署结果"],
         )
 
-    if not rule.get("resources"):
+    # 至少需要 3 个 kubectl 命令
+    if kubectl_count < 3:
         return CheckResult(
             ok=False,
-            error="rules[0] 缺少 resources",
-            hints=["指定 resources，如 ['pods', 'pods/log']"],
-        )
-
-    if not rule.get("verbs"):
-        return CheckResult(
-            ok=False,
-            error="rules[0] 缺少 verbs",
-            hints=["指定 verbs，如 ['get', 'list', 'watch']"],
-        )
-
-    if not rb_doc:
-        return CheckResult(
-            ok=False,
-            error="缺少 RoleBinding",
-            hints=["创建一个 RoleBinding 绑定 SA 和 Role"],
-        )
-
-    # 检查 RoleBinding
-    role_ref = rb_doc.get("roleRef")
-    if not isinstance(role_ref, dict):
-        return CheckResult(
-            ok=False,
-            error="RoleBinding 缺少 roleRef",
-            hints=["添加 roleRef 引用 Role"],
-        )
-
-    subjects = rb_doc.get("subjects")
-    if not isinstance(subjects, list) or not subjects:
-        return CheckResult(
-            ok=False,
-            error="RoleBinding 缺少 subjects",
-            hints=["添加 subjects 引用 ServiceAccount"],
-        )
-
-    if not pod_doc:
-        return CheckResult(
-            ok=False,
-            error="缺少 Pod（需要绑定 SA 并设置安全上下文）",
-            hints=["创建一个 Pod 使用 SA 并配置 securityContext"],
-        )
-
-    # 检查 Pod 是否绑定了 SA
-    pod_spec = pod_doc.get("spec", {})
-    if not isinstance(pod_spec, dict):
-        return CheckResult(ok=False, error="Pod 缺少 spec", hints=[])
-
-    sa_name = pod_spec.get("serviceAccountName")
-    if not sa_name:
-        return CheckResult(
-            ok=False,
-            error="Pod 缺少 serviceAccountName（需要绑定 SA）",
-            hints=["添加 spec.serviceAccountName 引用 ServiceAccount"],
-        )
-
-    # 检查 securityContext
-    has_pod_sc = isinstance(pod_spec.get("securityContext"), dict)
-    containers = pod_spec.get("containers", [])
-    has_container_sc = False
-    if isinstance(containers, list) and containers:
-        c = containers[0]
-        if isinstance(c, dict) and isinstance(c.get("securityContext"), dict):
-            has_container_sc = True
-
-    if not has_pod_sc and not has_container_sc:
-        return CheckResult(
-            ok=False,
-            error="缺少 securityContext（CKA 要求配置安全上下文）",
-            hints=["在 Pod 或容器级别添加 securityContext（如 runAsNonRoot: true）"],
+            error=f"命令数量不足（仅 {kubectl_count} 个 kubectl 命令），综合挑战需要至少 3 个步骤",
+            hints=["综合挑战需要: 创建命名空间 + 部署应用 + 验证结果，至少 3 个 kubectl 命令"],
         )
 
     return CheckResult(
         ok=True, state=None,
-        hints=["RBAC 与安全综合完成！SA + Role + RoleBinding + securityContext 🏆"],
+        hints=[f"综合操作完成！共 {kubectl_count} 个 kubectl 命令，多步骤操作是 CKA 考试的核心能力 🏆"],
     )
 
 
 LEVEL_Q28_5 = Level(
     id="Q28.5",
     chapter="ch28",
-    title="RBAC 与安全 - 权限与安全上下文",
+    title="综合挑战 - 多步骤操作",
     description="""
-# CKA 模拟 - RBAC 与安全 🏆
+# CKA 综合挑战 🏆
 
-**综合考核**：配置 ServiceAccount、Role、RoleBinding 和 Pod 安全上下文。
+**终极考核**：使用 kubectl 命令完成多步骤综合操作。
+
+## 场景
+
+你需要在一个新命名空间中完成以下操作：
+1. 创建命名空间 `production`
+2. 在该命名空间中部署 nginx 应用
+3. 暴露 Service
+4. 验证所有资源是否正常
 
 ## 任务
 
-创建多文档 YAML 包含：
-1. **ServiceAccount**（名称 `app-sa`）
-2. **Role**（名称 `pod-reader`）
-   - rules: apiGroups [""], resources ["pods", "pods/log"], verbs ["get", "list", "watch"]
-3. **RoleBinding**（名称 `pod-reader-binding`）
-   - roleRef: Role/pod-reader
-   - subjects: ServiceAccount/app-sa
-4. **Pod**（名称 `secure-app`）
-   - serviceAccountName: app-sa
-   - 容器 `app`，镜像 `nginx:1.25`
-   - securityContext: runAsNonRoot: true, runAsUser: 1000
+写出完整的 kubectl 命令序列，包含至少 3 个 kubectl 命令：
+- `kubectl create namespace` 创建命名空间
+- `kubectl run` 或 `kubectl apply` 部署应用
+- `kubectl expose` 暴露 Service
+- `kubectl get` 验证结果
 
 ## 提示
 
-```yaml
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: app-sa
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: pod-reader
-rules:
-- apiGroups: [""]
-  resources: ["pods", "pods/log"]
-  verbs: ["get", "list", "watch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: pod-reader-binding
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: pod-reader
-subjects:
-- kind: ServiceAccount
-  name: app-sa
----
-apiVersion: v1
-kind: Pod
-metadata:
-  name: secure-app
-spec:
-  serviceAccountName: app-sa
-  securityContext:
-    runAsNonRoot: true
-    runAsUser: 1000
-  containers:
-  - name: app
-    image: nginx:1.25
+```bash
+# 1. 创建命名空间
+kubectl create namespace production
+
+# 2. 在命名空间中部署应用
+kubectl run nginx-app --image=nginx:1.25 -n production
+
+# 3. 暴露 Service
+kubectl expose deployment nginx-app --port=80 -n production
+
+# 4. 验证
+kubectl get pods -n production
+kubectl get svc -n production
 ```
 """,
     starter_yaml="""\
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: app-sa
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: pod-reader
-# 添加 rules
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: pod-reader-binding
-# 添加 roleRef 和 subjects
----
-apiVersion: v1
-kind: Pod
-metadata:
-  name: secure-app
-spec:
-  # 添加 serviceAccountName
-  # 添加 securityContext
-  containers:
-  - name: app
-    image: nginx:1.25
+# 输入完整的 kubectl 命令序列
+# 1. kubectl create namespace <name>
+# 2. kubectl run <name> --image=<image> -n <ns>
+# 3. kubectl expose deployment <name> --port=<port> -n <ns>
+# 4. kubectl get pods -n <ns>
 """,
-    check_fn=_check_285_rbac_security,
+    check_fn=_check_285_comprehensive,
     lesson=Lesson(
         concept="""\
-## CKA RBAC 与安全
+## CKA 综合操作能力
 
-CKA 考试中，RBAC（基于角色的访问控制）和安全上下文是必考内容。
+CKA 考试的最后一类题目是综合操作——需要多个 kubectl 命令组合完成复杂任务。这类题目考验对 Kubernetes 资源体系的整体理解和命令熟练度。
 
-### RBAC 四要素
+### 常见综合操作场景
 
-```
-ServiceAccount (身份) → RoleBinding (绑定) → Role (权限) → API 操作
-```
-
-1. **ServiceAccount**：Pod 的身份标识
-2. **Role**：命名空间级权限规则
-3. **RoleBinding**：将 Role 绑定到 SA/User/Group
-4. **ClusterRole/ClusterRoleBinding**：集群级权限
-
-### securityContext 要点
-
-```yaml
-# Pod 级别
-spec:
-  securityContext:
-    runAsNonRoot: true      # 禁止 root 运行
-    runAsUser: 1000         # 以 UID 1000 运行
-    runAsGroup: 2000        # 以 GID 2000 运行
-    fsGroup: 3000           # 卷文件组
-
-# 容器级别
-spec:
-  containers:
-  - name: app
-    securityContext:
-      allowPrivilegeEscalation: false  # 禁止提权
-      readOnlyRootFilesystem: true      # 只读根文件系统
-      capabilities:
-        drop: ["ALL"]                   # 删除所有 Linux capabilities
-```
-
-### 常用 kubectl 命令
+#### 场景 1：命名空间隔离部署
 
 ```bash
-kubectl auth can-i get pods --as=system:serviceaccount:default:app-sa  # 检查权限
-kubectl get role,rolebinding                                           # 查看 RBAC
-kubectl describe role <name>                                           # 查看 Role 规则
-kubectl auth can-i --list --as=<user>                                  # 列出所有权限
+# 创建命名空间
+kubectl create namespace production
+
+# 在命名空间中部署应用
+kubectl run nginx-app --image=nginx:1.25 -n production
+
+# 暴露 Service
+kubectl expose deployment nginx-app --port=80 -n production
+
+# 验证
+kubectl get pods,svc -n production
 ```
 
-### CKA 安全最佳实践
+#### 场景 2：ConfigMap + Secret + Pod
 
-1. 为每个应用创建专用 ServiceAccount
-2. 遵循最小权限原则（只授予必要的 verbs）
-3. Pod 禁止 root 运行（runAsNonRoot: true）
-4. 容器只读文件系统（readOnlyRootFilesystem: true）
-5. 删除不必要的 capabilities
+```bash
+# 创建 ConfigMap
+kubectl create configmap app-config --from-literal=KEY=value -n production
+
+# 创建 Secret
+kubectl create secret generic db-secret --from-literal=password=mysecret -n production
+
+# 部署 Pod 使用配置
+kubectl run app --image=nginx:1.25 --dry-run=client -o yaml > pod.yaml
+# 编辑 pod.yaml 添加 envFrom / volumeMounts
+kubectl apply -f pod.yaml
+
+# 验证
+kubectl get pods -n production
+kubectl exec -it app -n production -- env
+```
+
+#### 场景 3：网络策略隔离
+
+```bash
+# 创建命名空间
+kubectl create namespace secure-app
+
+# 部署后端应用
+kubectl run backend --image=nginx:1.25 -n secure-app
+kubectl expose deployment backend --port=80 -n secure-app
+
+# 部署前端应用
+kubectl run frontend --image=nginx:1.25 -n secure-app
+kubectl expose deployment frontend --port=80 -n secure-app
+
+# 创建 NetworkPolicy 限制后端只接受前端流量
+kubectl apply -f - <<EOF
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend-policy
+  namespace: secure-app
+spec:
+  podSelector:
+    matchLabels:
+      run: backend
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          run: frontend
+    ports:
+    - protocol: TCP
+      port: 80
+EOF
+
+# 验证
+kubectl get networkpolicy -n secure-app
+kubectl get pods,svc -n secure-app
+```
+
+#### 场景 4：扩容 + 滚动更新 + 回滚
+
+```bash
+# 部署应用
+kubectl run web --image=nginx:1.25
+
+# 扩容
+kubectl scale deployment web --replicas=5
+
+# 更新镜像
+kubectl set image deployment/web nginx=nginx:1.26
+
+# 查看滚动更新状态
+kubectl rollout status deployment/web
+
+# 如果出问题，回滚
+kubectl rollout undo deployment/web
+
+# 查看历史
+kubectl rollout history deployment/web
+```
+
+### CKA 考试时间管理
+
+```
+2 小时考试时间分配建议:
+- 简单部署题（run/expose/scale）: 5-10 分钟/题
+- 故障排查题（describe/logs）: 10-15 分钟/题
+- 网络策略题（NetworkPolicy）: 10-15 分钟/题
+- RBAC 题（auth/role/rolebinding）: 10-15 分钟/题
+- 综合题（多步骤）: 15-20 分钟/题
+- 检查和验证: 最后 15 分钟
+```
+
+### CKA 考试速查命令
+
+```bash
+# 创建资源
+kubectl create namespace <name>
+kubectl create configmap <name> --from-literal=<k>=<v>
+kubectl create secret generic <name> --from-literal=<k>=<v>
+kubectl run <name> --image=<image>
+kubectl expose deployment <name> --port=<port>
+
+# 管理资源
+kubectl scale deployment <name> --replicas=<n>
+kubectl set image deployment/<name> <container>=<image>
+kubectl rollout undo deployment/<name>
+
+# 查看资源
+kubectl get pods,svc,deploy -n <ns>
+kubectl get pods -o wide
+kubectl describe pod <name>
+
+# 排查
+kubectl logs <pod> --previous
+kubectl exec -it <pod> -- /bin/sh
+kubectl auth can-i <verb> <resource> --as=<user>
+
+# 生成 YAML
+kubectl run <name> --image=<image> --dry-run=client -o yaml
+kubectl create configmap <name> --from-literal=k=v --dry-run=client -o yaml
+```
 """,
         key_fields=[
-            {"name": "Role.rules[].apiGroups", "description": "API 组", "required": True, "example": '[""]'},
-            {"name": "Role.rules[].resources", "description": "资源类型", "required": True, "example": '["pods", "pods/log"]'},
-            {"name": "Role.rules[].verbs", "description": "操作动词", "required": True, "example": '["get", "list", "watch"]'},
-            {"name": "RoleBinding.roleRef", "description": "引用 Role", "required": True, "example": "{apiGroup: rbac.authorization.k8s.io, kind: Role, name: pod-reader}"},
-            {"name": "RoleBinding.subjects", "description": "绑定的身份", "required": True, "example": "[{kind: ServiceAccount, name: app-sa}]"},
-            {"name": "Pod.spec.serviceAccountName", "description": "绑定的 SA", "required": True, "example": "app-sa"},
-            {"name": "securityContext", "description": "安全上下文", "required": True, "example": "{runAsNonRoot: true, runAsUser: 1000}"},
+            {"name": "kubectl create namespace", "description": "创建命名空间实现资源隔离", "required": True, "example": "kubectl create namespace production"},
+            {"name": "kubectl run / apply", "description": "部署应用到命名空间", "required": True, "example": "kubectl run nginx --image=nginx:1.25 -n production"},
+            {"name": "kubectl expose", "description": "暴露 Service", "required": False, "example": "kubectl expose deployment nginx --port=80 -n production"},
+            {"name": "kubectl get", "description": "验证资源状态", "required": True, "example": "kubectl get pods,svc -n production"},
+            {"name": "-n / --namespace", "description": "指定命名空间，综合操作中必须注意", "required": True, "example": "-n production"},
         ],
         diagram="""\
-  RBAC + 安全上下文综合架构
+  CKA 综合操作流程
 
-  ┌────────────────────────────────────────────────────┐
-  │  ServiceAccount (app-sa)                           │
-  │  Pod 的身份标识                                     │
-  └──────────────────────┬─────────────────────────────┘
-                         │ 绑定
-                         ▼
-  ┌────────────────────────────────────────────────────┐
-  │  RoleBinding (pod-reader-binding)                  │
-  │  roleRef: Role/pod-reader                          │
-  │  subjects: ServiceAccount/app-sa                   │
-  └──────────────────────┬─────────────────────────────┘
-                         │ 授予
-                         ▼
-  ┌────────────────────────────────────────────────────┐
-  │  Role (pod-reader)                                 │
-  │  rules:                                            │
-  │  - apiGroups: [""]                                 │
-  │    resources: ["pods", "pods/log"]                 │
-  │    verbs: ["get", "list", "watch"]                 │
-  └────────────────────────────────────────────────────┘
-
-  ┌────────────────── Pod (secure-app) ────────────────┐
-  │  serviceAccountName: app-sa                        │
-  │  securityContext:                                  │
-  │    runAsNonRoot: true    ◄── 禁止 root             │
-  │    runAsUser: 1000       ◄── 非 root 用户          │
-  │  containers:                                       │
-  │  - app (nginx:1.25)                                │
-  └────────────────────────────────────────────────────┘
+  ┌──────────────────────────────────────────────────────────────┐
+  │  步骤 1: 创建命名空间                                        │
+  │                                                              │
+  │  $ kubectl create namespace production                      │
+  │                                                              │
+  │  ┌──────────────────────────────────┐                       │
+  │  │  namespace: production            │                       │
+  │  │  (资源隔离)                       │                       │
+  │  └──────────────────────────────────┘                       │
+  └──────────────────────────┬───────────────────────────────────┘
+                             │
+                             v
+  ┌──────────────────────────────────────────────────────────────┐
+  │  步骤 2: 部署应用                                            │
+  │                                                              │
+  │  $ kubectl run nginx-app --image=nginx:1.25 -n production   │
+  │                                                              │
+  │  ┌──────────────────────────────────┐                       │
+  │  │  namespace: production            │                       │
+  │  │  ┌──────────────────────┐         │                       │
+  │  │  │ Deployment: nginx-app │         │                       │
+  │  │  │  replicas: 1          │         │                       │
+  │  │  │  ┌──────────────────┐ │         │                       │
+  │  │  │  │ Pod: nginx-app-0 │ │         │                       │
+  │  │  │  │  image: nginx    │ │         │                       │
+  │  │  │  └──────────────────┘ │         │                       │
+  │  │  └──────────────────────┘         │                       │
+  │  └──────────────────────────────────┘                       │
+  └──────────────────────────┬───────────────────────────────────┘
+                             │
+                             v
+  ┌──────────────────────────────────────────────────────────────┐
+  │  步骤 3: 暴露 Service                                        │
+  │                                                              │
+  │  $ kubectl expose deployment nginx-app --port=80            │
+  │    -n production                                             │
+  │                                                              │
+  │  ┌──────────────────────────────────┐                       │
+  │  │  namespace: production            │                       │
+  │  │  ┌──────────────────────┐         │                       │
+  │  │  │ Service: nginx-app   │         │                       │
+  │  │  │  ClusterIP: 10.96... │         │                       │
+  │  │  │  port: 80            │         │                       │
+  │  │  └──────────┬───────────┘         │                       │
+  │  │             │ selector             │                       │
+  │  │             v                      │                       │
+  │  │  ┌──────────────────────┐         │                       │
+  │  │  │ Pod: nginx-app-0     │         │                       │
+  │  │  └──────────────────────┘         │                       │
+  │  └──────────────────────────────────┘                       │
+  └──────────────────────────┬───────────────────────────────────┘
+                             │
+                             v
+  ┌──────────────────────────────────────────────────────────────┐
+  │  步骤 4: 验证                                                │
+  │                                                              │
+  │  $ kubectl get pods,svc -n production                       │
+  │  NAME                        READY   STATUS    AGE           │
+  │  pod/nginx-app-xxx           1/1     Running   1m           │
+  │  service/nginx-app           ClusterIP  10.96.x.x  80/TCP   │
+  │                                                              │
+  │  $ kubectl get endpoints nginx-app -n production            │
+  │  NAME         ENDPOINTS           AGE                       │
+  │  nginx-app    10.244.1.5:80      1m                        │
+  └──────────────────────────────────────────────────────────────┘
 """,
         example_yaml="""\
----                                          # 文档分隔
-apiVersion: v1                               # SA API
-kind: ServiceAccount                         # 资源类型
-metadata:                                    # 元数据
-  name: app-sa                               # SA 名称
----                                          # 文档分隔
-apiVersion: rbac.authorization.k8s.io/v1     # RBAC API
-kind: Role                                   # 资源类型: Role
-metadata:                                    # 元数据
-  name: pod-reader                           # Role 名称
-rules:                                       # 权限规则
-- apiGroups:                                 # API 组
-  - ""                                       # 核心组
-  resources:                                 # 资源类型
-  - pods                                     # Pod 资源
-  - pods/log                                 # Pod 日志
-  verbs:                                     # 操作权限
-  - get                                      # 获取
-  - list                                     # 列表
-  - watch                                    # 监听
----                                          # 文档分隔
-apiVersion: rbac.authorization.k8s.io/v1     # RBAC API
-kind: RoleBinding                            # 资源类型: RoleBinding
-metadata:                                    # 元数据
-  name: pod-reader-binding                   # 绑定名称
-roleRef:                                     # 引用 Role
-  apiGroup: rbac.authorization.k8s.io        # API 组
-  kind: Role                                 # Role 类型
-  name: pod-reader                           # Role 名称
-subjects:                                    # 绑定主体
-- kind: ServiceAccount                       # SA 类型
-  name: app-sa                               # SA 名称
----                                          # 文档分隔
-apiVersion: v1                               # Pod API
-kind: Pod                                    # 资源类型
-metadata:                                    # 元数据
-  name: secure-app                           # Pod 名称
-spec:                                        # 规格
-  serviceAccountName: app-sa                 # 绑定 SA
-  securityContext:                           # Pod 安全上下文
-    runAsNonRoot: true                       # 禁止 root
-    runAsUser: 1000                          # UID 1000
-  containers:                                # 容器列表
-  - name: app                                # 容器名
-    image: nginx:1.25                        # 镜像
+# === CKA 综合操作完整命令序列 ===
+
+# 步骤 1: 创建命名空间
+kubectl create namespace production
+
+# 步骤 2: 在命名空间中部署应用
+kubectl run nginx-app --image=nginx:1.25 -n production
+
+# 步骤 3: 暴露 Service
+kubectl expose deployment nginx-app --port=80 --target-port=80 -n production
+
+# 步骤 4: 扩容
+kubectl scale deployment nginx-app --replicas=3 -n production
+
+# 步骤 5: 验证所有资源
+kubectl get pods,svc,deploy -n production
+
+# 步骤 6: 检查 Endpoints
+kubectl get endpoints nginx-app -n production
+
+# 步骤 7: 测试连通性
+kubectl exec -it $(kubectl get pods -n production -l run=nginx-app -o jsonpath='{.items[0].metadata.name}') -n production -- curl -s http://nginx-app:80
 """,
         common_errors=[
-            "Role rules 中 apiGroups 写成 ['v1']（核心 API 组是空字符串 ''）",
-            "RoleBinding 的 roleRef 或 subjects 与 Role/SA 名称不匹配",
-            "Pod 忘记绑定 serviceAccountName（默认使用 default SA）",
-            "securityContext 写在 spec 外面（应在 spec 下或 container 内）",
+            "忘记在每个 kubectl 命令后加 -n <namespace>，资源创建到 default 命名空间",
+            "命名空间名称写错（如 Production vs production，K8s 命名空间区分大小写）",
+            "expose 时忘记指定 -n，Service 创建在错误的命名空间",
+            "验证时忘记 -n，看不到新创建的资源",
+            "综合操作中没有验证步骤，不确定操作是否成功",
+            "时间管理不当，在简单题上花太多时间",
         ],
         tips=[
-            "用 kubectl auth can-i --as=system:serviceaccount:default:app-sa get pods 验证权限",
-            "apiGroups 的核心组是空字符串 ''，不是 'v1'",
-            "Pod 级 securityContext 对所有容器生效，容器级可覆盖 Pod 级",
+            "综合操作中每个 kubectl 命令都要带 -n <namespace>，这是最常见的错误",
+            "用 `kubectl get all -n <ns>` 一次查看命名空间中所有资源",
+            "CKA 考试时间紧张，优先用命令而非 YAML，省下时间给复杂题",
+            "每完成一步就验证，不要等所有步骤做完再检查",
+            "用 `kubectl get pods -w` 实时观察 Pod 状态变化",
+            "最后留 15 分钟检查所有题目，确保没有遗漏",
         ],
     ),
 )

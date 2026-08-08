@@ -312,11 +312,16 @@ KNOWLEDGE_POINTS = {
     "Q16.4": ["优先级分层设计", "系统级 vs 用户级", "多 PriorityClass"],
     "Q16.5": ["多优先级工作负载", "priorityClassName", "Pod 优先级调度"],
     # Ch17: CRD & Operator
-    "Q17.1": ["CRD 概念", "spec.group", "spec.names", "spec.versions"],
-    "Q17.2": ["自定义资源 CR", "apiVersion 匹配", "spec 字段"],
-    "Q17.3": ["CRD Schema 验证", "openAPIV3Schema", "类型校验"],
-    "Q17.4": ["Operator 模式", "控制循环", "watch-compare-act"],
-    "Q17.5": ["Operator 实战", "CRD + 控制器部署", "多文档 YAML"],
+    "Q17.1": ["CRD 概念", "metadata.name 格式校验", "spec.group", "spec.names", "spec.versions"],
+    "Q17.2": ["CRD Schema 验证", "openAPIV3Schema", "properties", "类型校验"],
+    "Q17.3": ["Operator RBAC", "Role.rules", "RoleBinding.subjects", "ServiceAccount"],
+    "Q17.4": ["Status 子资源", "subresources.status", "WATCH_NAMESPACE", "spec/status 隔离"],
+    "Q17.5": ["Operator 实战", "CRD + SA + Deployment", "多文档 YAML", "完整部署栈"],
+    "Q17.6": ["Reconcile 循环", "水平触发", "watch-compare-act", "requeue", "优雅退出"],
+    "Q17.7": ["OwnerReference", "级联删除", "垃圾回收", "uid", "controller"],
+    "Q17.8": ["Finalizer", "优雅删除", "deletionTimestamp", "清理机制"],
+    "Q17.9": ["Conditions", "status.conditions", "type/status/lastTransitionTime", "状态管理"],
+    "Q17.10": ["Operator 最佳实践", "幂等性", "requeue", "finalizer", "ownerReference"],
     # Ch18: ServiceAccount & 安全上下文
     "Q18.1": ["ServiceAccount", "身份认证", "metadata.name"],
     "Q18.2": ["Pod 绑定 SA", "serviceAccountName", "身份传递"],
@@ -390,6 +395,8 @@ KNOWLEDGE_POINTS = {
 LEVEL_XP = {f"Q{i}.{j}": 10 for i in range(2, 29) for j in range(1, 6)}
 LEVEL_XP.update({"Q0.1": 10, "Q0.2": 10, "Q0.3": 10})
 LEVEL_XP.update({f"Q1.{j}": 10 for j in range(1, 8)})
+# Ch17 扩展为 10 关
+LEVEL_XP.update({f"Q17.{j}": 10 for j in range(6, 11)})
 
 # 章节通关奖励
 CHAPTER_BONUS_XP = {f"ch{i:02d}": 50 for i in range(0, 29)}
@@ -443,7 +450,7 @@ KNOWLEDGE_DOMAINS = {
     "资源管理": ["Q14.1", "Q14.2", "Q14.3", "Q14.4", "Q14.5"],
     "中断保护": ["Q15.1", "Q15.2", "Q15.3", "Q15.4", "Q15.5"],
     "优先级调度": ["Q16.1", "Q16.2", "Q16.3", "Q16.4", "Q16.5"],
-    "自定义资源": ["Q17.1", "Q17.2", "Q17.3", "Q17.4", "Q17.5"],
+    "自定义资源": ["Q17.1", "Q17.2", "Q17.3", "Q17.4", "Q17.5", "Q17.6", "Q17.7", "Q17.8", "Q17.9", "Q17.10"],
     "安全与身份": ["Q18.1", "Q18.2", "Q18.3", "Q18.4", "Q18.5"],
     "包管理": ["Q19.1", "Q19.2", "Q19.3", "Q19.4", "Q19.5"],
     "存储进阶": ["Q20.1", "Q20.2", "Q20.3", "Q20.4", "Q20.5"],

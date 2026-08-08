@@ -1589,14 +1589,14 @@ class TestE2EJourney:
         return r.json()
 
     def test_report_completion_rate_100(self):
-        """报告显示完成率（65/145 = Ch0-12 全通）"""
+        """报告显示完成率（65/150 = Ch0-12 全通）"""
         data = self._generate_report()
-        assert data["completion_rate"] == 65 / 145
+        assert data["completion_rate"] == 65 / 150
         assert data["completed_count"] == 65
-        assert data["total_levels"] == 145
+        assert data["total_levels"] == 150
 
     def test_report_grade_s(self):
-        """报告评定（65/145 完成率 ≈ 44.8% -> D 级）"""
+        """报告评定（65/150 完成率 ≈ 43.3% -> D 级）"""
         data = self._generate_report()
         assert data["grade"] == "D"
         assert "起步中" in data["grade_comment"]
@@ -1647,7 +1647,7 @@ class TestE2EJourney:
     def test_report_no_weak_areas(self):
         """Ch13-28 未完成 -> 有薄弱项"""
         data = self._generate_report()
-        assert len(data["weak_areas"]) == 80  # Ch13-28 共 80 关未完成
+        assert len(data["weak_areas"]) == 85  # Ch13-28 共 85 关未完成
 
     # ---- 验证称号 ----
 
@@ -1699,7 +1699,10 @@ class TestE2EJourney:
             assert ch["rate"] == 1.0
         for ch_id in [f"ch{i:02d}" for i in range(13, 29)]:
             ch = data["chapter_stats"][ch_id]
-            assert ch["total"] == 5
+            if ch_id == "ch17":
+                assert ch["total"] == 10  # Operator expanded to 10 levels
+            else:
+                assert ch["total"] == 5
             assert ch["completed"] == 0
             assert ch["rate"] == 0.0
 
