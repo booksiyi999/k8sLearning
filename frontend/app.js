@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════
-// 🍒 K8s Quest - 游戏化逻辑引擎 v2
+// K8s 实战学堂 - 游戏化逻辑引擎 v2
 // 匹配 index.html (sibling version) 的数据结构
 // ═══════════════════════════════════════════════
 
@@ -293,7 +293,7 @@ function quest() {
     // 徽章系统
     // ═══════════════════════════════════════════
     badgeDefs: [
-      { id: 'pod_newbie', icon: '🌱', name: 'Pod 新手', desc: '完成 Ch1 全部 4 关', check: (s) => s.isChapterComplete('ch01') },
+      { id: 'pod_newbie', icon: '🌱', name: 'Pod 新手', desc: '完成 Ch1 全部 7 关', check: (s) => s.isChapterComplete('ch01') },
       { id: 'deploy_master', icon: '🚀', name: 'Deployment 大师', desc: '完成 Ch2 全部 4 关', check: (s) => s.isChapterComplete('ch02') },
       { id: 'svc_driver', icon: '🔗', name: 'Service 老司机', desc: '完成 Ch3 全部 4 关', check: (s) => s.isChapterComplete('ch03') },
       { id: 'config_expert', icon: '⚙️', name: '配置专家', desc: '完成 Ch4 全部 4 关', check: (s) => s.isChapterComplete('ch04') },
@@ -402,7 +402,7 @@ h1{color:#ff6b9d}table{width:100%;border-collapse:collapse;margin:16px 0}td,th{p
 .grade{font-size:48px;font-weight:900;color:${colors[r.grade]||'#fff'}}.summary{display:flex;gap:20px;margin:20px 0}
 .summary div{text-align:center;padding:12px;background:#0f1419;border-radius:8px}
 </style></head><body>
-<h1>🍒 K8s Quest 结业报告</h1>
+<h1>🚀 K8s 实战学堂 - 结业报告</h1>
 <div class="grade">${r.grade}</div>
 <p>${r.grade_comment}</p>
 <div class="summary">
@@ -417,7 +417,7 @@ h1{color:#ff6b9d}table{width:100%;border-collapse:collapse;margin:16px 0}td,th{p
 <ul>${weaks || '<li>无</li>'}</ul>
 <h2>🎯 学习建议</h2>
 <ul>${recs || '<li>继续保持！</li>'}</ul>
-<p style="color:#8b9bb4;margin-top:40px">由 🍒 樱桃 K8s Quest 生成</p>
+<p style="color:#8b9bb4;margin-top:40px">由 K8s 实战学堂生成</p>
 </body></html>`;
       const blob = new Blob([html], { type: 'text/html' });
       const url = URL.createObjectURL(blob);
@@ -479,19 +479,19 @@ h1{color:#ff6b9d}table{width:100%;border-collapse:collapse;margin:16px 0}td,th{p
 
     getChapterId(lid) {
       const chNum = lid.match(/Q(\d+)\./)?.[1];
-      return chNum ? `ch0${chNum}` : 'ch01';
+      return chNum ? `ch${chNum.padStart(2, '0')}` : 'ch01';
     },
 
     isChapterUnlocked(chId) {
-      const chNum = chId.replace('ch0', '');
-      if (chNum === '1') return true;
-      const prevNum = parseInt(chNum) - 1;
+      const chNum = parseInt(chId.replace('ch', ''));
+      if (isNaN(chNum) || chNum <= 0) return true;  // ch00 始终解锁
+      const prevNum = chNum - 1;
       const prevLevels = this.levels.filter(l => l.id.startsWith(`Q${prevNum}.`));
       return prevLevels.length > 0 && prevLevels.every(l => this.progress.completed_levels.includes(l.id));
     },
 
     isChapterComplete(chId) {
-      const chNum = chId.replace('ch0', '');
+      const chNum = parseInt(chId.replace('ch', ''));
       const chLevels = this.levels.filter(l => l.id.startsWith(`Q${chNum}.`));
       return chLevels.length > 0 && chLevels.every(l => this.progress.completed_levels.includes(l.id));
     },
