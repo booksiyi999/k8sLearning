@@ -216,7 +216,7 @@ CHAPTERS_META = {
 
 KNOWLEDGE_POINTS = {
     "Q0.1": ["K8s 架构总览", "控制面组件", "数据面组件", "Node 角色", "多文档 YAML"],
-    "Q0.2": ["声明式模型", "Reconcile 循环", "Deployment 自愈", "期望状态 vs 实际状态"],
+    "Q0.2": ["声明式模型", "期望状态", "kubectl apply vs create", "Deployment 自愈"],
     "Q0.3": ["kubectl 全链路", "API Server 认证/授权/准入", "etcd 持久化", "Service selector 匹配"],
     "Q1.1": ["Pod 概念", "YAML 结构 (apiVersion/kind/metadata/spec)", "containers 定义"],
     "Q1.2": ["Labels 标签", "标签选择器", "key-value 键值对"],

@@ -2,7 +2,9 @@
 
 基于 Claude Code review 建议新增的第 0 章，让零基础学员在写第一行
 YAML 前建立 K8s 全景认知。涵盖控制面/数据面架构、声明式模型与
-Reconcile 循环、kubectl 与 API 交互全链路。
+期望状态、kubectl 与 API 交互全链路。
+
+Reconcile 循环的深入讲解放在 Ch17 CRD & Operator 章节。
 """
 from app.validator import Level, CheckResult, Lesson
 from app.simulator import apply_manifest, ClusterState, K8sError
@@ -235,10 +237,10 @@ metadata:
 )
 
 
-# ==================== Q0.2 声明式模型与 Reconcile 循环 ====================
+# ==================== Q0.2 声明式模型与期望状态 ====================
 
 def _check_02_declarative(user_yaml: str) -> CheckResult:
-    """Q0.2 声明式模型与 Reconcile 循环"""
+    """Q0.2 声明式模型与期望状态"""
     try:
         state = ClusterState()
         state = apply_manifest(state, user_yaml)
@@ -263,7 +265,7 @@ def _check_02_declarative(user_yaml: str) -> CheckResult:
             hints=["在 spec.replicas 中设置 3 个副本"],
         )
 
-    # 验证 reconcile 循环：Deployment 应自动创建了 3 个 Pod
+    # 验证 K8s 自动创建了 3 个 Pod（声明式的体现：你说 3 个，K8s 帮你创建）
     deploy_pods = [
         name for name, pod in state.pods.items()
         if pod.get("metadata", {}).get("labels", {}).get("pod-template-hash") == "web-deploy"
@@ -271,8 +273,8 @@ def _check_02_declarative(user_yaml: str) -> CheckResult:
     if len(deploy_pods) != 3:
         return CheckResult(
             ok=False,
-            error=f"Reconcile 循环应自动创建 3 个 Pod，实际 {len(deploy_pods)} 个",
-            hints=["这是模拟器的 reconcile 行为：Deployment apply 后自动实例化 Pod"],
+            error=f"K8s 应自动创建 3 个 Pod，实际 {len(deploy_pods)} 个",
+            hints=["你声明了 replicas: 3，K8s 会自动帮你创建对应数量的 Pod"],
         )
 
     # 验证容器镜像
@@ -292,7 +294,7 @@ def _check_02_declarative(user_yaml: str) -> CheckResult:
     return CheckResult(
         ok=True, state=state,
         hints=[
-            "太棒了！你声明了 3 个副本，Deployment Controller 的 Reconcile 循环自动创建了 3 个 Pod 🔄",
+            "你声明了 3 个副本，K8s 自动创建了 3 个 Pod — 这就是声明式的力量 ✨",
         ],
     )
 
@@ -300,28 +302,27 @@ def _check_02_declarative(user_yaml: str) -> CheckResult:
 LEVEL_Q0_2 = Level(
     id="Q0.2",
     chapter="ch00",
-    title="声明式模型与 Reconcile 循环",
+    title="声明式模型与期望状态",
     description="""
-# 声明式模型与 Reconcile 循环 🔄
+# 声明式模型与期望状态 ✨
 
-K8s 的核心设计哲学是**声明式（Declarative）**：你告诉 K8s "我想要 3 个 nginx Pod"，而不是 "帮我启动 3 个 Pod"。
+K8s 的核心设计哲学是**声明式（Declarative）**：你告诉 K8s "我想要 3 个 nginx Pod"，K8s 自动帮你维持这个状态。
 
-## 声明式 vs 命令式
+## 命令式 vs 声明式
 
 | | 命令式 (Imperative) | 声明式 (Declarative) |
 |---|---|---|
-| 你说什么 | "启动 3 个 Pod" | "我想要 3 个 Pod 运行" |
+| 你说什么 | "帮我启动 3 个 Pod" | "我想要 3 个 Pod 运行" |
 | 谁负责 | 你手动管理 | K8s 自动维持 |
 | Pod 挂了 | 你手动重启 | K8s 自动重建 |
 | 扩缩容 | 你手动加减 | 改 replicas 数字 |
 
-## Reconcile 循环
+## 期望状态
 
-```
-watch（监听） → compare（比较期望 vs 实际） → act（执行操作）
-```
+你在 YAML 中写的是**期望状态（Desired State）**："我想要 3 个 nginx Pod"。
+K8s 负责让**实际状态**不断靠近**期望状态**。你不需要关心怎么启动、在哪启动，只需要声明"想要什么"。
 
-控制器不断循环：发现实际状态 ≠ 期望状态 → 自动修复。
+> Reconcile 循环（K8s 如何自动维持状态的内部机制）将在 Ch17 CRD & Operator 章节详细讲解。
 
 ## 要求
 
@@ -330,7 +331,7 @@ watch（监听） → compare（比较期望 vs 实际） → act（执行操作
 - `replicas: 3`
 - 容器镜像 `nginx:1.25`
 
-apply 后，模拟器的 Reconcile 循环会自动创建 3 个 Pod。
+apply 后，K8s 会自动创建 3 个 Pod — 你只声明了"想要 3 个"，不需要手动创建。
 
 ## 提示
 
@@ -376,46 +377,47 @@ spec:
     check_fn=_check_02_declarative,
     lesson=Lesson(
         concept="""\
-## 声明式模型与 Reconcile 循环
+## 声明式模型与期望状态
 
 Kubernetes 的核心设计哲学是**声明式（Declarative）**模型，这是它与传统运维方式的根本区别。
 
-### 声明式 vs 命令式
+### 命令式 vs 声明式
 
-- **命令式**："帮我启动 3 个 Pod" — 你发出指令，系统执行一次就结束。如果 Pod 挂了，你需要再次手动启动。
-- **声明式**："我期望集群中有 3 个 nginx Pod 在运行" — 你声明**期望状态（Desired State）**，系统持续监控并自动维持这个状态。
+- **命令式**：`docker run nginx` — 你发出指令，系统执行一次就结束。容器挂了？你得自己重启。
+- **声明式**：`kubectl apply -f deploy.yaml`（YAML 里写 replicas: 3）— 你声明**期望状态**，K8s 持续维持这个状态。Pod 挂了？K8s 自动重建。
 
-### Reconcile 循环（控制循环）
+### 期望状态（Desired State）
 
-每个 K8s 控制器都运行一个 **Reconcile 循环**，不断执行三步：
-
+你在 YAML 中写的 `spec` 就是期望状态：
+```yaml
+spec:
+  replicas: 3        # 我期望有 3 个 Pod
+  containers:
+  - image: nginx:1.25  # 我期望用这个镜像
 ```
-1. Watch（监听）— 监听资源变化事件（通过 API Server 的 watch 机制）
-2. Compare（比较）— 比较期望状态（spec）与实际状态（status）
-3. Act（执行）— 如果两者不一致，执行操作使其趋于一致
-```
 
-### Deployment 的自愈机制
+K8s 的工作就是让**实际状态**不断靠近**期望状态**：
+- 你说 3 个 Pod → K8s 创建 3 个
+- 某个 Pod 崩溃 → K8s 自动新建一个补上
+- 你改成 5 个 → K8s 再创建 2 个
+- 你删除 Deployment → K8s 清理所有 Pod
 
-以 Deployment 为例，当你声明 `replicas: 3`：
+### kubectl apply vs kubectl create
 
-1. **正常状态**：3 个 Pod 运行中，期望 = 实际，控制器什么都不做
-2. **Pod 故障**：某个 Pod 崩溃，实际变为 2，期望仍是 3
-3. **Reconcile 触发**：控制器发现差异，创建 1 个新 Pod
-4. **恢复状态**：3 个 Pod 运行中，期望 = 实际，循环继续监听
+| 命令 | 类型 | 特点 |
+|---|---|---|
+| `kubectl create` | 命令式 | 创建一次，重复执行会报错 |
+| `kubectl apply` | 声明式 | 可重复执行，K8s 会对比差异只更新变化的部分 |
 
-### 为什么 Reconcile 循环如此强大？
-
-- **自愈**：Pod 挂了自动重建，Node 挂了自动迁移
-- **幂等**：同一个声明 apply 多次，结果相同
-- **最终一致性**：不需要立即一致，系统会持续趋近期望状态
-- **可组合**：多个控制器可以监听同一资源，各自负责不同方面
+日常使用推荐 `kubectl apply`，因为它是声明式的 — 你只需维护 YAML 文件，K8s 负责让集群状态匹配你的声明。
 
 ### 关键概念
 
 - **期望状态（Desired State）**：你在 YAML 中声明的 `spec` 部分
-- **实际状态（Actual State）**：集群当前的运行状况，存在 etcd 的 `status` 字段中
-- **控制器（Controller）**：运行 Reconcile 循环的组件，每种资源都有对应的控制器
+- **实际状态（Actual State）**：集群当前的运行状况
+- K8s 自动让实际状态趋近期望状态 — 你不需要关心"怎么做"，只需要声明"想要什么"
+
+> K8s 内部是如何自动维持状态的？这涉及 **Reconcile 循环**（控制循环）机制，将在后续 Ch17 CRD & Operator 章节深入讲解。
 """,
         key_fields=[
             {"name": "spec.replicas", "description": "期望的 Pod 副本数量", "required": True, "example": "3"},
@@ -424,39 +426,24 @@ Kubernetes 的核心设计哲学是**声明式（Declarative）**模型，这是
             {"name": "spec.template.spec.containers[].image", "description": "容器镜像", "required": True, "example": "nginx:1.25"},
         ],
         diagram="""\
-    用户 apply YAML                  API Server
-         │                               │
-         ▼                               │
-  ┌──────────────┐    写入 etcd         │
-  │ kubectl apply├──────────────────────►│
-  └──────────────┘                      │
+  你（声明期望状态）              K8s 集群
+
+  ┌──────────────┐
+  │ YAML 文件     │
+  │ replicas: 3  │──apply──►  K8s 自动维持
+  │ image: nginx │            ┌─────────────────────┐
+  └──────────────┘            │  Pod 1 ✅ running   │
+                              │  Pod 2 ✅ running   │
+  你只说"想要什么"              │  Pod 3 ✅ running   │
+  不关心"怎么做"               └─────────────────────┘
                                         │
-                    ┌───────────────────┘
-                    │ watch 事件
-                    ▼
-         ┌─────────────────────┐
-         │ Deployment Controller│ ◄── Reconcile 循环
-         │  (controller-manager)│
-         └──────────┬──────────┘
-                    │ compare: 期望3 实际0 → 差3
-                    │ act: 创建 3 个 Pod
-                    ▼
-         ┌─────────────────────┐
-         │    Pod 1  Pod 2  Pod 3  │ ◄── kubelet 启动容器
-         └─────────────────────┘
-                    │
-                    │ Pod 2 崩溃！
-                    ▼
-         ┌─────────────────────┐
-         │    Pod 1  [X]   Pod 3  │  实际=2 期望=3
-         └─────────────────────┘
-                    │
-                    │ Reconcile 再次触发
-                    │ act: 创建 1 个新 Pod
-                    ▼
-         ┌─────────────────────┐
-         │    Pod 1  Pod 4  Pod 3  │  实际=3 期望=3 ✓
-         └─────────────────────┘
+                               Pod 2 崩溃！
+                                        ▼
+                              ┌─────────────────────┐
+                              │  Pod 1 ✅ running   │
+                              │  Pod 4 ✅ running   │  ← K8s 自动补一个
+                              │  Pod 3 ✅ running   │
+                              └─────────────────────┘
 """,
         example_yaml="""\
 apiVersion: apps/v1          # Deployment 的 API 版本
@@ -484,9 +471,9 @@ spec:                        # 期望状态声明
             "把 image 写在 spec.containers 而不是 spec.template.spec.containers 下",
         ],
         tips=[
-            "Reconcile 循环是 K8s 的灵魂 — 理解了它就理解了 K8s 的一半",
             "声明式意味着你不需要关心'怎么做'，只需要声明'想要什么'",
-            "Deployment Controller 会持续监听变化，即使你没有做任何操作",
+            "kubectl apply 可以重复执行，K8s 只更新变化的部分",
+            "改 replicas 数字就能扩缩容，不需要手动增删 Pod",
             "kubectl get deploy web-deploy 查看 READY 列可以确认期望 vs 实际",
         ],
     ),

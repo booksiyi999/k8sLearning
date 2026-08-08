@@ -171,12 +171,12 @@ spec:
 
 
 def test_q0_2_correct_answer_passes():
-    """Deployment replicas=3 + nginx:1.25 -> 通过，且 Reconcile 自动创建 3 个 Pod"""
+    """Deployment replicas=3 + nginx:1.25 -> 通过，且 K8s 自动创建 3 个 Pod"""
     lv = get_level("Q0.2")
     result = lv.check_fn(_Q0_2_CORRECT)
     assert result.ok is True
     assert "web-deploy" in result.state.deployments
-    # Reconcile 循环应自动创建 3 个 Pod
+    # K8s 应自动创建 3 个 Pod（声明式的体现）
     deploy_pods = [
         name for name, pod in result.state.pods.items()
         if pod.get("metadata", {}).get("labels", {}).get("pod-template-hash") == "web-deploy"
