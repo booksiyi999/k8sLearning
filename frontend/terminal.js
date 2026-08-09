@@ -34,23 +34,23 @@ function terminalMixin() {
 
     termRenderWelcome() {
       this.termOutput = [
-        { type: 'sys', text: '🍒 K8s Quest 交互式终端' },
+        { type: 'sys', text: 'K8s 实战学堂 - 交互式终端' },
         { type: 'sys', text: '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━' },
       ];
       if (!this.termClusterMode) {
         this.termOutput.push({
           type: 'sys',
-          text: '⚠️ 当前为模拟器模式，如需使用终端请配置 K8S_QUEST_MODE=cluster'
+          text: '当前为模拟器模式，如需使用终端请配置 K8S_QUEST_MODE=cluster'
         });
       } else {
         this.termOutput.push({
           type: 'sys',
-          text: `✅ 已连接集群 · namespace: ${this.termNamespace} · 模式: ${this.termMode}`
+          text: `已连接集群 · namespace: ${this.termNamespace} · 模式: ${this.termMode}`
         });
       }
       this.termOutput.push({
         type: 'sys',
-        text: '💡 提示: ↑↓ 浏览历史 · Tab 自动补全 · Ctrl+L 清屏'
+        text: '提示: ↑↓ 浏览历史 · Tab 自动补全 · Ctrl+L 清屏'
       });
       this.termOutput.push({
         type: 'sys',

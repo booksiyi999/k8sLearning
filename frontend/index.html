@@ -135,6 +135,7 @@
             <button class="tab-btn" :class="{active: activeTab==='practice'}" @click="switchTab('practice')">✏️ 动手练习</button>
             <button class="tab-btn" :class="{active: activeTab==='terminal'}" @click="switchTab('terminal')">🖥️ 终端</button>
             <button class="tab-btn" :class="{active: activeTab==='cluster'}" @click="switchTab('cluster')" x-show="clusterMode">🔧 集群实战</button>
+            <button class="tab-btn" :class="{active: activeTab==='playground'}" @click="switchTab('playground')" x-show="hasPlayground && clusterMode">🚀 实操</button>
           </div>
 
           <!-- ====== Tab 1: 知识讲解面板 ====== -->
@@ -333,6 +334,38 @@
             </template>
           </div>
 
+          <!-- ====== Tab: 实操面板 ====== -->
+          <div class="practice-panel" x-show="activeTab==='playground'">
+            <div class="playground-info">
+              <h4>🚀 实操模块</h4>
+              <p>将你写好的 YAML 保存到文件，然后在终端中手动执行 kubectl apply。</p>
+              <p>这模拟了真实运维工作流：编写 YAML -> 保存文件 -> kubectl apply -> kubectl get/describe 验证</p>
+            </div>
+
+            <!-- YAML 预览 -->
+            <div class="yaml-editor-wrap">
+              <div class="yaml-editor-header">
+                <span class="yaml-tab">📄 当前YAML</span>
+              </div>
+              <pre class="playground-yaml-preview" x-text="userYaml || '(请在「动手练习」Tab中编写YAML)'"></pre>
+            </div>
+
+            <!-- 保存按钮 -->
+            <div class="action-buttons">
+              <button class="btn-run" @click="savePlayground()" :disabled="!userYaml">
+                💾 保存 YAML 到文件
+              </button>
+            </div>
+
+            <!-- 保存后提示 -->
+            <template x-if="playgroundSaved">
+              <div class="playground-saved-info">
+                <p>✅ 文件已保存: <code x-text="playgroundFilepath"></code></p>
+                <p>💡 切换到「终端」Tab，执行: <code x-text="playgroundApplyCmd"></code></p>
+              </div>
+            </template>
+          </div>
+
           <!-- ====== Tab 3: 终端面板 ====== -->
           <div class="terminal-panel" x-show="activeTab==='terminal'">
             <!-- 模拟器模式提示 -->
@@ -348,6 +381,18 @@
             <!-- 集群模式: 完整终端 -->
             <template x-if="clusterMode">
               <div class="terminal-container terminal-embedded">
+
+                <!-- 实操快捷命令 (当 hasPlayground && playgroundSaved 时显示) -->
+                <template x-if="hasPlayground && playgroundSaved">
+                  <div class="playground-quick-cmds">
+                    <button @click="termInput = playgroundApplyCmd; termRun()" class="btn-quick-cmd">
+                      ▶ kubectl apply
+                    </button>
+                    <button @click="termInput = 'kubectl get all'; termRun()" class="btn-quick-cmd">
+                      ▶ kubectl get all
+                    </button>
+                  </div>
+                </template>
 
                 <!-- 终端顶栏 -->
                 <div class="terminal-mini-bar">

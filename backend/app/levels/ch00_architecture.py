@@ -326,12 +326,14 @@ metadata:
             "标签键拼写错误（正确格式：node-role.kubernetes.io/control-plane）",
             "标签值忘了加引号（空字符串需要用 \"\" 表示）",
             "把 Node 的 kind 写成了 node（K8s 区分大小写）",
+            "在真实集群中 apply Node 后状态为 NotReady——这是正常的，因为这台机器上没有 kubelet 在运行。模拟器只校验 YAML 结构，不模拟 kubelet 注册行为。使用「🚀 实操」模块在真实集群中体验 Node 的 NotReady 状态",
         ],
         tips=[
             "控制面组件不直接运行用户容器，它只管理集群状态",
             "etcd 是集群唯一的持久化存储，备份 etcd = 备份整个集群",
             "kubelet 是唯一知道如何启动容器的组件（通过 CRI 接口）",
             "所有 K8s 操作都必须经过 API Server，没有后门",
+            "kubectl apply 成功只表示 API Server 接受了 YAML，不代表资源最终状态正常——Node 需要 kubelet 注册才会 Ready",
         ],
     ),
 )

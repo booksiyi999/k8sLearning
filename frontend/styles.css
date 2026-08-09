@@ -2048,3 +2048,65 @@ body {
   background: #313244;
   border-color: #89b4fa;
 }
+
+/* ═══ v2.2 新增: 实操模块 (Playground) ═══ */
+
+.playground-info {
+  padding: 12px;
+  background: #1a1a2e;
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+.playground-info h4 { margin: 0 0 8px; color: #89b4fa; }
+.playground-info p { margin: 4px 0; color: #a6adc8; font-size: 13px; }
+.playground-yaml-preview {
+  background: #0f1419;
+  padding: 12px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: #cdd6f4;
+  white-space: pre-wrap;
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid #333;
+}
+.playground-saved-info {
+  padding: 12px;
+  background: #1a3a1a;
+  border-radius: 8px;
+  margin-top: 12px;
+  border: 1px solid #2a5a2a;
+}
+.playground-saved-info code {
+  background: #0f1419;
+  padding: 2px 6px;
+  border-radius: 3px;
+  color: #a6e3a1;
+  font-family: var(--font-mono);
+}
+
+/* 实操快捷命令按钮 (终端面板内) */
+.playground-quick-cmds {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #1a2a1a;
+  border-bottom: 1px solid #2a5a2a;
+}
+.btn-quick-cmd {
+  padding: 6px 14px;
+  background: #1e3a1e;
+  color: #a6e3a1;
+  border: 1px solid #2a5a2a;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  transition: var(--transition);
+}
+.btn-quick-cmd:hover {
+  background: #2a4a2a;
+  border-color: #4a7a4a;
+  color: #c6f3c1;
+}

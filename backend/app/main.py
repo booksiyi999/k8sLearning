@@ -587,6 +587,69 @@ async def api_progress_import(req: ImportRequest):
     }
 
 
+# ═══ v2.2 新增: 实操模块（YAML 存文件 + 用户自主 kubectl apply） ═══
+
+class PlaygroundSaveRequest(BaseModel):
+    level_id: str
+    yaml_content: str
+
+
+@app.post("/api/playground/save")
+async def api_playground_save(req: PlaygroundSaveRequest):
+    """保存用户 YAML 到文件，供终端手动 kubectl apply 使用。
+
+    不是自动部署——用户自己在终端中执行 kubectl apply -f <filepath>。
+    """
+    import os
+
+    save_dir = "/tmp/k8s-quest"
+    os.makedirs(save_dir, exist_ok=True)
+
+    # 文件名: Q1_1.yaml
+    safe_name = req.level_id.replace(".", "_")
+    filename = f"{safe_name}.yaml"
+    filepath = os.path.join(save_dir, filename)
+
+    try:
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(req.yaml_content)
+    except Exception as e:
+        return {"ok": False, "error": f"保存失败: {e}"}
+
+    return {
+        "ok": True,
+        "filepath": filepath,
+        "filename": filename,
+        "hint": f"YAML 已保存到 {filepath}",
+        "apply_command": f"kubectl apply -f {filepath}",
+        "verify_command": f"kubectl get all",
+    }
+
+
+@app.get("/api/playground/levels")
+async def api_playground_levels():
+    """返回支持实操模块的关卡列表。"""
+    from app.metadata import CHAPTERS_META
+    # 关键关卡：需要用户直接与 K8s 交互的章节
+    playground_levels = {
+        "Q0.1", "Q0.3",           # 架构总览：创建Node/Pod+Service
+        "Q1.1", "Q1.6",           # Pod基础：第一个Pod + 探针
+        "Q2.1", "Q2.3",           # Deployment：创建 + 滚动更新
+        "Q3.1",                   # Service：创建并测试连通性
+        "Q6.1",                   # 调度：nodeSelector
+        "Q9.5",                   # RBAC实战：验证权限
+        "Q12.5",                  # NetworkPolicy实战：验证流量隔离
+        "Q13.1",                  # DaemonSet：每个节点一个
+        "Q17.1",                  # CRD：创建自定义资源
+        "Q22.1",                  # 故障排查：CrashLoopBackOff
+        "Q28.1", "Q28.2", "Q28.5", # CKA：kubectl操作挑战
+    }
+    return {
+        "levels": sorted(playground_levels),
+        "save_dir": "/tmp/k8s-quest",
+    }
+
+
 # 静态前端挂载放在最后，避免吞掉上面的 /api/* 路由。
 if FRONTEND_DIR.exists():
     app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")

@@ -68,6 +68,12 @@ function quest() {
     clusterVerifyResult: null,  // /api/check/cluster 的详细结果
     isCh28: false,              // 当前关卡是否属于 Ch28
 
+    // ── 实操模块状态 ──
+    playgroundLevels: [],       // 支持实操的关卡ID列表
+    playgroundSaved: false,     // 是否已保存当前关卡YAML
+    playgroundFilepath: '',     // 保存的文件路径
+    playgroundApplyCmd: '',     // 建议的apply命令
+
     // ═══════════════════════════════════════════
     // 初始化
     // ═══════════════════════════════════════════
@@ -76,6 +82,7 @@ function quest() {
       await this.loadLevels();
       this.loadProgress();
       await this.checkClusterMode();
+      this.loadPlaygroundLevels();
     },
 
     async loadMeta() {
@@ -790,6 +797,50 @@ th{background:#f5f5f5;font-weight:600}
       if (!this.currentLevel) return false;
       const chId = this.currentLevel.chapter;
       return this.chapters?.[chId]?.track === '实战级';
+    },
+
+    // ═══════════════════════════════════════════
+    // 实操模块 (Playground)
+    // ═══════════════════════════════════════════
+    async loadPlaygroundLevels() {
+      try {
+        const r = await fetch('/api/playground/levels');
+        const data = await r.json();
+        this.playgroundLevels = data.levels || [];
+      } catch(e) { console.error('loadPlaygroundLevels:', e); }
+    },
+
+    get hasPlayground() {
+      return this.playgroundLevels.includes(this.currentLevel?.id);
+    },
+
+    async savePlayground() {
+      if (!this.currentLevel || !this.userYaml) return;
+      try {
+        const r = await fetch('/api/playground/save', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({level_id: this.currentLevel.id, yaml_content: this.userYaml})
+        });
+        const data = await r.json();
+        if (data.ok) {
+          this.playgroundSaved = true;
+          this.playgroundFilepath = data.filepath;
+          this.playgroundApplyCmd = data.apply_command;
+          this.showToast('YAML 已保存到 ' + data.filepath, 'success');
+          // 切换到终端Tab
+          this.switchTab('terminal');
+          // 在终端输出保存提示
+          this.termOutput.push({type: 'sys', text: 'YAML 已保存到: ' + data.filepath});
+          this.termOutput.push({type: 'sys', text: '建议执行: ' + data.apply_command});
+          this.termOutput.push({type: 'sys', text: '验证结果: ' + data.verify_command});
+          this.termScrollToBottom();
+        } else {
+          this.showToast('保存失败: ' + (data.error || ''), 'error');
+        }
+      } catch(e) {
+        this.showToast('网络错误: ' + e, 'error');
+      }
     },
 
     // ── 计算属性 ──
