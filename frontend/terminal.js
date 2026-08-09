@@ -19,6 +19,8 @@ function terminalMixin() {
     termMode: 'simulator',
     termInitialized: false,
     termShowSuggest: true,     // 是否显示自动补全建议
+    termReadonly: true,        // 默认只读模式
+    termWriteMode: false,      // 写入模式开关
 
     // ═══════════════════════════════════════════
     // 初始化
@@ -259,7 +261,7 @@ function terminalMixin() {
         const r = await fetch('/api/kubectl', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ command: cmd, force: !!force }),
+          body: JSON.stringify({ command: cmd, force: !!force, readonly: this.termReadonly }),
         });
         const data = await r.json();
 
@@ -306,6 +308,19 @@ function terminalMixin() {
     termCancelConfirm() {
       this.termConfirmCmd = null;
       this.termOutput.push({ type: 'sys', text: '✕ 已取消执行' });
+      this.termScrollToBottom();
+    },
+
+    // ── 切换只读/写入模式 ──
+    toggleTermMode() {
+      this.termWriteMode = !this.termWriteMode;
+      this.termReadonly = !this.termWriteMode;
+      this.termOutput.push({
+        type: 'sys',
+        text: this.termWriteMode 
+          ? '写入模式已开启 - mutating 命令需要确认'
+          : '只读模式已开启 - 仅允许 get/describe/logs 等只读命令'
+      });
       this.termScrollToBottom();
     },
 

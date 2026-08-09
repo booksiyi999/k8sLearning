@@ -96,6 +96,41 @@ def _check_251_init_container(user_yaml: str) -> CheckResult:
             hints=["initContainers 完成后才启动主容器，你需要同时定义主容器"],
         )
 
+    # 检查 volumes（emptyDir 共享卷）
+    volumes = spec.get("volumes", [])
+    if not isinstance(volumes, list) or not volumes:
+        return CheckResult(
+            ok=False,
+            error="Pod 缺少 spec.volumes（需要 emptyDir 共享卷）",
+            hints=["定义 emptyDir 卷供 initContainer 和主容器共享数据"],
+        )
+
+    has_emptydir = any(
+        isinstance(v, dict) and isinstance(v.get("emptyDir"), dict)
+        for v in volumes
+    )
+    if not has_emptydir:
+        return CheckResult(
+            ok=False,
+            error="未找到 emptyDir 卷（Init Container 场景需要 emptyDir 共享存储）",
+            hints=["使用 emptyDir: {} 创建共享卷"],
+        )
+
+    # 检查 initContainer 和主容器共享同一卷
+    vol_names = {v.get("name") for v in volumes if isinstance(v, dict)}
+    init_mounts = init_c.get("volumeMounts", [])
+    init_vol_names = {m.get("name") for m in init_mounts if isinstance(m, dict)} if isinstance(init_mounts, list) else set()
+    main_c = containers[0] if isinstance(containers[0], dict) else {}
+    main_mounts = main_c.get("volumeMounts", [])
+    main_vol_names = {m.get("name") for m in main_mounts if isinstance(m, dict)} if isinstance(main_mounts, list) else set()
+    shared_vols = init_vol_names & main_vol_names & vol_names
+    if not shared_vols:
+        return CheckResult(
+            ok=False,
+            error="initContainer 和主容器未共享同一卷",
+            hints=["确保 initContainer 和主容器都 volumeMount 了同一个 volume"],
+        )
+
     return CheckResult(
         ok=True, state=None,
         hints=["Init Container 在主容器启动前运行，完成后才启动主容器 🔧"],
@@ -338,6 +373,20 @@ def _check_252_sidecar(user_yaml: str) -> CheckResult:
             error="主容器和 Sidecar 容器应挂载同一个共享卷",
             hints=["确保两个容器都 volumeMount 了同一个 volume"],
         )
+
+    # 检查 Sidecar 容器有 command（边车需要执行辅助任务）
+    for c in containers:
+        if not isinstance(c, dict):
+            continue
+        # 找非主容器（sidecar）检查是否有 command
+        c_name = c.get("name", "")
+        if c_name and c_name != "app":
+            if not c.get("command"):
+                return CheckResult(
+                    ok=False,
+                    error="Sidecar 容器缺少 command（边车需要执行辅助任务）",
+                    hints=["Sidecar 容器应有 command 来执行日志同步等辅助任务"],
+                )
 
     return CheckResult(
         ok=True, state=None,

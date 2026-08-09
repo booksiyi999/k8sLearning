@@ -732,10 +732,12 @@ th{background:#f5f5f5;font-weight:600}
 
     isChapterUnlocked(chId) {
       const chNum = parseInt(chId.replace('ch', ''));
-      if (isNaN(chNum) || chNum <= 0) return true;  // ch00 始终解锁
+      if (isNaN(chNum) || chNum <= 1) return true;  // ch00 + ch01 默认解锁
       const prevNum = chNum - 1;
       const prevLevels = this.levels.filter(l => l.id.startsWith(`Q${prevNum}.`));
-      return prevLevels.length > 0 && prevLevels.every(l => this.progress.completed_levels.includes(l.id));
+      if (prevLevels.length === 0) return true;
+      // 渐进式解锁: 完成上一章至少1关即可解锁下一章
+      return prevLevels.some(l => this.progress.completed_levels.includes(l.id));
     },
 
     isChapterComplete(chId) {

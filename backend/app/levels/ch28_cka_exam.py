@@ -25,28 +25,53 @@ def _check_281_kubectl_ops(user_input: str) -> CheckResult:
             hints=["需要使用 kubectl run、kubectl expose、kubectl scale 命令"],
         )
 
-    lower = text.lower()
+    # 解析 kubectl 命令（跳过注释和空行）
+    import shlex
+    commands = []
+    for line in text.split('\n'):
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        if line.startswith('kubectl ') or line.startswith('kubectl\t'):
+            try:
+                parts = shlex.split(line[8:])  # 去掉 "kubectl" 前缀
+            except ValueError:
+                parts = line[8:].split()
+            commands.append({
+                'subcommand': parts[0].lower() if parts else '',
+                'args': parts[1:] if len(parts) > 1 else [],
+                'raw': line,
+            })
 
-    # 检查包含 kubectl
-    if "kubectl" not in lower:
+    if not commands:
         return CheckResult(
             ok=False,
-            error="命令中缺少 kubectl",
-            hints=["CKA 核心是 kubectl 操作能力，请使用 kubectl 命令"],
+            error="未找到有效的 kubectl 命令（注释和空行不算）",
+            hints=["每行以 kubectl 开头，如: kubectl run nginx --image=nginx"],
         )
 
     # 检查 kubectl run（创建 Pod/Deployment）
-    has_run = "kubectl" in lower and "run" in lower
-    if not has_run:
+    run_cmds = [c for c in commands if c['subcommand'] == 'run']
+    if not run_cmds:
         return CheckResult(
             ok=False,
             error="缺少 kubectl run 命令（创建 Pod/Deployment）",
             hints=["使用 kubectl run <name> --image=<image> 创建应用"],
         )
 
+    # 验证 run 命令有 --image 参数
+    for cmd in run_cmds:
+        args_str = ' '.join(cmd['args'])
+        if '--image' not in args_str:
+            return CheckResult(
+                ok=False,
+                error="kubectl run 缺少 --image 参数",
+                hints=["kubectl run 需要 --image=<image> 指定镜像，如: kubectl run nginx --image=nginx"],
+            )
+
     # 检查 kubectl expose（暴露 Service）
-    has_expose = "expose" in lower
-    if not has_expose:
+    expose_cmds = [c for c in commands if c['subcommand'] == 'expose']
+    if not expose_cmds:
         return CheckResult(
             ok=False,
             error="缺少 kubectl expose 命令（暴露 Service）",
@@ -54,12 +79,34 @@ def _check_281_kubectl_ops(user_input: str) -> CheckResult:
         )
 
     # 检查 kubectl scale（扩容）
-    has_scale = "scale" in lower
-    if not has_scale:
+    scale_cmds = [c for c in commands if c['subcommand'] == 'scale']
+    if not scale_cmds:
         return CheckResult(
             ok=False,
             error="缺少 kubectl scale 命令（扩容副本数）",
             hints=["使用 kubectl scale deployment <name> --replicas=<n> 扩容"],
+        )
+
+    # 验证 scale 命令有 --replicas 参数
+    for cmd in scale_cmds:
+        args_str = ' '.join(cmd['args'])
+        if '--replicas' not in args_str:
+            return CheckResult(
+                ok=False,
+                error="kubectl scale 缺少 --replicas 参数",
+                hints=["kubectl scale 需要 --replicas=<n> 指定副本数"],
+            )
+
+    # 验证命令顺序: run 应在 expose 之前
+    run_idx = next((i for i, c in enumerate(commands) if c['subcommand'] == 'run'), -1)
+    expose_idx = next((i for i, c in enumerate(commands) if c['subcommand'] == 'expose'), -1)
+    scale_idx = next((i for i, c in enumerate(commands) if c['subcommand'] == 'scale'), -1)
+
+    if run_idx >= 0 and expose_idx >= 0 and run_idx > expose_idx:
+        return CheckResult(
+            ok=False,
+            error="命令顺序错误: kubectl run 应在 kubectl expose 之前执行",
+            hints=["先创建应用 (run)，再暴露服务 (expose)，最后扩容 (scale)"],
         )
 
     return CheckResult(
@@ -264,33 +311,66 @@ def _check_282_troubleshoot(user_input: str) -> CheckResult:
             hints=["排查 CrashLoopBackOff 需要 kubectl describe 和 kubectl logs"],
         )
 
-    lower = text.lower()
+    # 解析 kubectl 命令（跳过注释和空行）
+    import shlex
+    commands = []
+    for line in text.split('\n'):
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        if line.startswith('kubectl ') or line.startswith('kubectl\t'):
+            try:
+                parts = shlex.split(line[8:])
+            except ValueError:
+                parts = line[8:].split()
+            commands.append({
+                'subcommand': parts[0].lower() if parts else '',
+                'args': parts[1:] if len(parts) > 1 else [],
+                'raw': line,
+            })
 
-    # 检查包含 kubectl
-    if "kubectl" not in lower:
+    if not commands:
         return CheckResult(
             ok=False,
-            error="命令中缺少 kubectl",
-            hints=["使用 kubectl describe 和 kubectl logs 排查 Pod 故障"],
+            error="未找到有效的 kubectl 命令（注释和空行不算）",
+            hints=["每行以 kubectl 开头，如: kubectl describe pod <pod-name>"],
         )
 
     # 检查 describe（查看 Pod 事件和状态）
-    has_describe = "describe" in lower
-    if not has_describe:
+    describe_cmds = [c for c in commands if c['subcommand'] == 'describe']
+    if not describe_cmds:
         return CheckResult(
             ok=False,
             error="缺少 kubectl describe 命令（查看 Pod 事件和详细状态）",
             hints=["使用 kubectl describe pod <pod-name> 查看 Events 和错误信息"],
         )
 
+    # 验证 describe 有资源类型参数（如 pod）
+    for cmd in describe_cmds:
+        if not cmd['args'] or cmd['args'][0].lower() not in ('pod', 'pods', 'po'):
+            return CheckResult(
+                ok=False,
+                error="kubectl describe 需要指定资源类型（如 pod <pod-name>）",
+                hints=["kubectl describe pod <pod-name> 查看Pod详情"],
+            )
+
     # 检查 logs（查看容器日志）
-    has_logs = "logs" in lower
-    if not has_logs:
+    logs_cmds = [c for c in commands if c['subcommand'] == 'logs']
+    if not logs_cmds:
         return CheckResult(
             ok=False,
             error="缺少 kubectl logs 命令（查看容器日志）",
             hints=["使用 kubectl logs <pod-name> 查看应用日志，或 kubectl logs <pod> --previous 查看上次崩溃的日志"],
         )
+
+    # 验证 logs 有 pod 名称参数
+    for cmd in logs_cmds:
+        if not cmd['args']:
+            return CheckResult(
+                ok=False,
+                error="kubectl logs 需要指定 Pod 名称",
+                hints=["kubectl logs <pod-name> 查看日志"],
+            )
 
     return CheckResult(
         ok=True, state=None,

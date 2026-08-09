@@ -460,6 +460,7 @@ async def api_check_cluster(req: ClusterCheckRequest):
 class KubectlRequest(BaseModel):
     command: str
     force: bool = False  # 确认执行危险命令
+    readonly: bool = True  # 默认只读模式，需前端显式切换到写入模式
 
 
 @app.post("/api/kubectl")
@@ -468,9 +469,10 @@ async def api_kubectl(req: KubectlRequest):
 
     - 模拟器模式：返回提示信息
     - 集群模式：执行命令并返回输出
-    - 危险命令（delete/scale/rollout等）需要 force=true
+    - 默认只读模式（readonly=True），只允许 get/describe/logs 等只读命令
+    - 危险命令（apply/delete/scale 等）需要 force=true + readonly=false
     """
-    result = await CLUSTER_MGR.kubectl_exec(req.command, force=req.force)
+    result = await CLUSTER_MGR.kubectl_exec(req.command, force=req.force, readonly=req.readonly)
     return result
 
 
@@ -480,6 +482,7 @@ async def api_kubectl_whitelist():
     return {
         "allowed": sorted(ClusterManager.ALLOWED_SUBCOMMANDS),
         "dangerous": sorted(ClusterManager.DANGEROUS_SUBCOMMANDS),
+        "readonly": sorted(ClusterManager.READONLY_SUBCOMMANDS),
         "namespace": CLUSTER_MGR.namespace,
         "mode": "cluster" if CLUSTER_MGR.enabled else "simulator",
     }

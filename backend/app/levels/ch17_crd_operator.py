@@ -2120,25 +2120,21 @@ Requeue 确保了：
   └── 自动恢复: Operator 重启后自动 Reconcile 所有 CR
 """,
         example_yaml="""\
-# Reconcile 循环伪代码
-
-def Reconcile(ctx, req):
-    # 1. Watch: 获取 CR
-    blog = get_blog(req.name)
-    if blog is NotFound:
-        return Result{}           # 优雅退出
-
-    # 2. Compare: 检查 Deployment 是否符合期望
-    desired = make_deploy(blog)
-    actual = get_deploy(blog.name)
-    if actual != desired:
-        # 3. Act: 更新 Deployment
-        update_deploy(desired)
-
-    # 4. 处理 error 和 requeue
-    if error:
-        return Result{requeue: true}    # 出错时重试
-    return Result{requeueAfter: 300}     # 5 分钟后再检查
+apiVersion: blog.example.com/v1          # CR API 版本
+kind: Blog                                # CR 类型
+metadata:                                 # 元数据
+  name: reconciled-blog                   # CR 名称
+spec:                                     # 用户期望状态
+  title: "Reconciled Blog"
+  content: "Hello K8s"
+status:                                   # Reconcile 循环写入的状态
+  observedGeneration: 1                   # Controller 已处理的 generation
+  conditions:                             # 条件列表
+  - type: Ready                           # 条件类型
+    status: "True"                        # 状态值
+    lastTransitionTime: "2024-01-01T00:00:00Z"  # 最后转换时间
+    reason: DeploymentReady
+    message: "Blog deployment is running"
 """,
         common_errors=[
             "将 Reconcile 理解为事件驱动而非状态驱动（应为水平触发）",
@@ -3003,6 +2999,8 @@ status:                                   # 状态（通过 /status 子资源更
   - type: Available
     status: "True"
     lastTransitionTime: "2024-01-01T00:00:00Z"
+    reason: PodsAvailable
+    message: "All pods are ready"
 """,
         common_errors=[
             "conditions 为空列表（需要至少一个 condition）",
@@ -3320,31 +3318,28 @@ def Reconcile(ctx, req):
   └───────────────────────────────────────────────────────┘
 """,
         example_yaml="""\
-# Operator 最佳实践清单
-
-1. 幂等性 - Reconcile 多次执行结果相同
-   → 先 get 再 create/update
-
-2. requeue - 错误时重新排队重试
-   → Result{requeue: true}
-
-3. finalizer - 资源删除前执行清理
-   → blog.example.com/cleanup
-
-4. ownerReference - 级联删除子资源
-   → set_owner_reference(deploy, blog)
-
-5. status 子资源 - spec/status 隔离
-   → spec.subresources.status: {}
-
-6. conditions - 多维度状态报告
-   → status.conditions: [{type: Ready, status: True, ...}]
-
-7. 最小权限 RBAC - 只授予必要权限
-   → Role + RoleBinding
-
-8. Leader Election - 高可用选主
-   → replicas: 1 或启用 leader election
+apiVersion: blog.example.com/v1          # CR API 版本
+kind: Blog                                # CR 类型
+metadata:                                 # 元数据
+  name: best-practice-blog                # CR 名称
+  ownerReferences:                        # 级联删除（最佳实践 4）
+  - apiVersion: blog.example.com/v1
+    kind: Blog
+    name: parent-blog
+    uid: abc-123-def-456
+  finalizers:                             # 优雅删除（最佳实践 3）
+  - blog.example.com/cleanup
+spec:                                     # 用户期望状态（最佳实践 1）
+  title: "Best Practice Blog"
+  content: "Following all Operator best practices"
+status:                                   # Controller 写入的状态（最佳实践 2）
+  observedGeneration: 1
+  conditions:                             # 状态管理（最佳实践 6）
+  - type: Ready
+    status: "True"
+    lastTransitionTime: "2024-01-01T00:00:00Z"
+    reason: DeploymentReady
+    message: "Blog deployment is running"
 """,
         common_errors=[
             "Reconcile 不是幂等的（重复创建资源）",

@@ -379,10 +379,19 @@ class ClusterManager:
         "taint", "rollout",
     })
 
-    # 危险子命令（需要前端确认）
+    # 危险子命令（需要前端确认）- 所有可能修改集群状态的命令
     DANGEROUS_SUBCOMMANDS = frozenset({
-        "delete", "drain", "cordon", "uncordon", "taint",
-        "scale", "rollout", "edit", "exec",
+        "apply", "create", "delete", "patch", "set",
+        "annotate", "label", "scale", "rollout", "edit",
+        "exec", "drain", "cordon", "uncordon", "taint",
+        "port-forward", "cp",
+    })
+
+    # 只读子命令（安全可直接执行）
+    READONLY_SUBCOMMANDS = frozenset({
+        "get", "describe", "logs", "top", "explain",
+        "api-resources", "api-versions", "cluster-info",
+        "version", "auth", "config", "wait",
     })
 
     # 禁止的子命令（集群级破坏性操作）
@@ -436,12 +445,13 @@ class ClusterManager:
 
         return True, "", args
 
-    async def kubectl_exec(self, command: str, force: bool = False) -> dict:
+    async def kubectl_exec(self, command: str, force: bool = False, readonly: bool = False) -> dict:
         """执行任意 kubectl 命令（经过安全验证）。
 
         Args:
             command: kubectl 命令字符串（不含 kubectl 前缀）
             force: 跳过危险命令确认
+            readonly: 只读模式，拦截所有非只读命令
 
         Returns:
             {
@@ -477,6 +487,18 @@ class ClusterManager:
 
         subcommand = args[0].lower()
         is_dangerous = subcommand in self.DANGEROUS_SUBCOMMANDS
+
+        # 只读模式: 拦截所有非只读命令
+        if readonly and subcommand not in self.READONLY_SUBCOMMANDS:
+            return {
+                "success": False,
+                "output": "",
+                "error": f"只读模式下禁止执行 '{subcommand}'。请切换到写入模式后再试。",
+                "command": command,
+                "dangerous": True,
+                "needs_confirm": False,
+                "readonly_blocked": True,
+            }
 
         if is_dangerous and not force:
             return {

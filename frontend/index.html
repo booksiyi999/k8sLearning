@@ -382,6 +382,13 @@
             <template x-if="clusterMode">
               <div class="terminal-container terminal-embedded">
 
+                <!-- 风险横幅（仅集群模式显示） -->
+                <template x-if="clusterMode">
+                  <div class="term-risk-banner" style="background: #fff3cd; border-left: 3px solid #ffc107; padding: 6px 12px; font-size: 12px; color: #856404;">
+                    <strong>安全提示:</strong> 终端连接真实集群。默认只读模式，写入操作需切换模式并确认。
+                  </div>
+                </template>
+
                 <!-- 实操快捷命令 (当 hasPlayground && playgroundSaved 时显示) -->
                 <template x-if="hasPlayground && playgroundSaved">
                   <div class="playground-quick-cmds">
@@ -398,6 +405,14 @@
                 <div class="terminal-mini-bar">
                   <span class="terminal-status-badge" x-text="termStatusText"></span>
                   <button class="terminal-btn-clear" @click="termClear()">🧹 清屏</button>
+                </div>
+
+                <!-- 模式切换按钮 -->
+                <div style="display: flex; gap: 8px; align-items: center;">
+                  <button @click="toggleTermMode()" :class="termWriteMode ? 'btn-mode-write' : 'btn-mode-readonly'" style="font-size: 11px; padding: 2px 8px; border-radius: 4px;">
+                    <span x-show="!termWriteMode">只读模式</span>
+                    <span x-show="termWriteMode">写入模式</span>
+                  </button>
                 </div>
 
                 <!-- 输出区域 -->

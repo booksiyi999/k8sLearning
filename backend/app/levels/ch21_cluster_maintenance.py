@@ -349,6 +349,12 @@ ETCDCTL_API=3 etcdctl snapshot restore snapshot.db \\
     check_fn=_check_212_etcd_restore,
     lesson=Lesson(
         concept="""\
+> **风险警告**: 本节涉及 etcd 数据操作等破坏性操作。
+> - **切勿在生产集群上练习**，请使用专用学习集群
+> - `mv /var/lib/etcd` 会停止 etcd 服务，导致集群不可用
+> - `kubeadm upgrade` 不可回滚，操作前必须完整备份
+> - 建议先在模拟器模式完成本章学习，再在隔离环境中实操
+
 ## etcd 恢复原理
 
 `etcdctl snapshot restore` 从快照文件恢复 etcd 数据到指定目录。与备份不同，恢复是一个**离线操作**——必须先停止 etcd 服务。
@@ -677,6 +683,12 @@ kubeadm certs renew apiserver
     check_fn=_check_213_cert_renewal,
     lesson=Lesson(
         concept="""\
+> **风险警告**: 本节涉及 etcd 数据操作等破坏性操作。
+> - **切勿在生产集群上练习**，请使用专用学习集群
+> - `mv /var/lib/etcd` 会停止 etcd 服务，导致集群不可用
+> - `kubeadm upgrade` 不可回滚，操作前必须完整备份
+> - 建议先在模拟器模式完成本章学习，再在隔离环境中实操
+
 ## Kubernetes 证书续期
 
 kubeadm 部署的集群使用大量 TLS 证书来保障各组件间的双向认证（mTLS）。这些证书默认有效期为 **1 年**，到期后集群将无法正常工作。
@@ -992,6 +1004,12 @@ kubeadm upgrade node
     check_fn=_check_214_kubeadm_upgrade,
     lesson=Lesson(
         concept="""\
+> **风险警告**: 本节涉及 etcd 数据操作等破坏性操作。
+> - **切勿在生产集群上练习**，请使用专用学习集群
+> - `mv /var/lib/etcd` 会停止 etcd 服务，导致集群不可用
+> - `kubeadm upgrade` 不可回滚，操作前必须完整备份
+> - 建议先在模拟器模式完成本章学习，再在隔离环境中实操
+
 ## Kubernetes 集群升级流程
 
 使用 `kubeadm` 升级 Kubernetes 集群是一个多步骤过程，需要按正确顺序操作。升级前**必须备份 etcd**。
@@ -1368,6 +1386,12 @@ kubeadm upgrade apply v1.28.0
     check_fn=_check_215_comprehensive,
     lesson=Lesson(
         concept="""\
+> **风险警告**: 本节涉及 etcd 数据操作等破坏性操作。
+> - **切勿在生产集群上练习**，请使用专用学习集群
+> - `mv /var/lib/etcd` 会停止 etcd 服务，导致集群不可用
+> - `kubeadm upgrade` 不可回滚，操作前必须完整备份
+> - 建议先在模拟器模式完成本章学习，再在隔离环境中实操
+
 ## 综合集群维护实战
 
 在生产环境中，集群维护是一个需要系统化思考的流程。本关将 etcd 备份、证书管理、集群升级三个核心技能综合运用。
