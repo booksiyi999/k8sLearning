@@ -1098,19 +1098,72 @@ def _match_labels(pod_labels: dict, selector: dict) -> bool:
     return True
 
 
+def get_resources_in_namespace(
+    state: ClusterState, resource_type: str, namespace: str = "default"
+) -> dict:
+    """从 state 的指定字段中返回 namespace 匹配的资源。
+
+    Args:
+        state: 集群状态
+        resource_type: 资源类型字段名 (如 'rolebindings', 'networkpolicies', ...)
+        namespace: 目标命名空间
+
+    Returns:
+        {key: doc} 子字典，只包含 metadata.namespace == namespace 的资源。
+        ClusterRole / ClusterRoleBinding 等集群级资源不受 namespace 过滤，
+        调用方应直接访问 state.clusterroles / state.clusterrolebindings。
+    """
+    resources = getattr(state, resource_type, None)
+    if not isinstance(resources, dict):
+        return {}
+    result: dict[str, dict] = {}
+    for key, doc in resources.items():
+        if not isinstance(doc, dict):
+            continue
+        meta = doc.get("metadata", {})
+        if not isinstance(meta, dict):
+            meta = {}
+        ns = meta.get("namespace", "default")
+        if ns == namespace:
+            result[key] = doc
+    return result
+
+
+def _get_pod_namespace(state: ClusterState, pod_name: str) -> str:
+    """获取 Pod 的 namespace，默认返回 'default'。"""
+    pod_doc = state.pods.get(pod_name)
+    if not isinstance(pod_doc, dict):
+        return "default"
+    meta = pod_doc.get("metadata", {})
+    if not isinstance(meta, dict):
+        return "default"
+    return meta.get("namespace", "default")
+
+
 def simulate_rbac_check(
-    state: ClusterState, sa_name: str, verb: str, resource: str
+    state: ClusterState,
+    sa_name: str,
+    verb: str,
+    resource: str,
+    namespace: str = "default",
 ) -> bool:
     """模拟 kubectl auth can-i 逻辑。
 
     遍历所有 RoleBinding / ClusterRoleBinding，找到绑定到指定 SA 的绑定，
     然后检查对应 Role / ClusterRole 的 rules 是否授予请求的 verb + resource。
 
+    Namespace 感知:
+    - RoleBinding 只在 metadata.namespace == namespace 时生效
+    - ClusterRoleBinding 在所有 namespace 生效
+    - Role 只在对应 namespace 生效（通过 RoleBinding 的 namespace 隐含）
+    - ClusterRole 在所有 namespace 生效
+
     Args:
         state: 集群状态
         sa_name: ServiceAccount 名称
         verb: 请求的操作（get, list, create, delete, ...）
         resource: 请求的资源类型（pods, services, ...）
+        namespace: 目标命名空间（默认 'default'）
 
     Returns:
         True 如果 SA 被授予了该权限，False 否则
@@ -1119,7 +1172,16 @@ def simulate_rbac_check(
     roles_to_check: list[dict] = []
 
     # --- RoleBinding（命名空间级绑定） ---
+    # RoleBinding 只在 metadata.namespace == 传入 namespace 时生效
     for rb in state.rolebindings.values():
+        # Namespace 过滤: RoleBinding 只在对应 namespace 生效
+        rb_meta = rb.get("metadata", {})
+        if not isinstance(rb_meta, dict):
+            continue
+        rb_ns = rb_meta.get("namespace", "default")
+        if rb_ns != namespace:
+            continue
+
         subjects = rb.get("subjects")
         if not isinstance(subjects, list):
             continue
@@ -1142,6 +1204,7 @@ def simulate_rbac_check(
             roles_to_check.append(state.clusterroles[ref_name])
 
     # --- ClusterRoleBinding（集群级绑定） ---
+    # ClusterRoleBinding 在所有 namespace 生效，不做 namespace 过滤
     for crb in state.clusterrolebindings.values():
         subjects = crb.get("subjects")
         if not isinstance(subjects, list):
@@ -1229,6 +1292,10 @@ def simulate_traffic(
        - 多个策略叠加：任一策略允许即放行
     c. 返回是否允许和匹配的策略名列表
 
+    Namespace 感知:
+    - NetworkPolicy 的 metadata.namespace 必须与 dst_pod 的 namespace 一致才生效
+    - 通过 _get_pod_namespace 获取 dst_pod 的 namespace
+
     Args:
         state: 集群状态
         src_pod: 源 Pod 名称
@@ -1248,6 +1315,7 @@ def simulate_traffic(
     dst_labels = dst_meta.get("labels", {})
     if not isinstance(dst_labels, dict):
         dst_labels = {}
+    dst_namespace = dst_meta.get("namespace", "default")
 
     src_pod_doc = state.pods.get(src_pod)
     if not isinstance(src_pod_doc, dict):
@@ -1261,8 +1329,17 @@ def simulate_traffic(
     src_namespace = src_meta.get("namespace", "default")
 
     # 找到所有选择 dst_pod 且管控 Ingress 的 NetworkPolicy
+    # Namespace 感知: NetworkPolicy 的 metadata.namespace 必须与 dst_pod 的 namespace 一致
     matched_policies: list[str] = []
     for np_name, np in state.networkpolicies.items():
+        # Namespace 过滤: NetworkPolicy 只在对应 namespace 生效
+        np_meta = np.get("metadata", {})
+        if not isinstance(np_meta, dict):
+            np_meta = {}
+        np_ns = np_meta.get("namespace", "default")
+        if np_ns != dst_namespace:
+            continue
+
         spec = np.get("spec")
         if not isinstance(spec, dict):
             continue

@@ -682,6 +682,45 @@ body {
   box-shadow: 0 4px 16px rgba(255,107,157,0.4);
 }
 
+/* 进度导入导出按钮 */
+.progress-io-buttons {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.btn-export-progress, .btn-import-progress {
+  flex: 1;
+  padding: 10px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  transition: var(--transition);
+}
+.btn-export-progress:hover {
+  background: rgba(152,195,121,0.15);
+  border-color: var(--color-success);
+  color: var(--color-success);
+}
+.btn-import-progress:hover {
+  background: rgba(97,175,239,0.15);
+  border-color: var(--color-info);
+  color: var(--color-info);
+}
+
+/* 导师报告导出按钮 */
+.btn-export-mentor {
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  color: white;
+}
+.btn-export-mentor:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+
 /* ==================== 浮动提示 ==================== */
 .toast {
   position: fixed;
@@ -989,7 +1028,7 @@ body {
   padding-top: 20px;
   border-top: 1px solid var(--border-color);
 }
-.btn-export, .btn-reset-progress {
+.btn-export, .btn-export-mentor, .btn-reset-progress {
   flex: 1;
   padding: 12px;
   border: none;
@@ -1955,4 +1994,57 @@ body {
     flex-wrap: wrap;
     gap: 12px;
   }
+}
+
+/* ═══ v2.1 新增: Track 徽章 + 集群验证 + 进度导入导出 ═══ */
+
+.track-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  margin-left: 6px;
+}
+.track-basic { background: #1a5f1a; color: #a6e3a1; }
+.track-cognitive { background: #5f3f1a; color: #f9e2af; }
+.track-practical { background: #5f1a1a; color: #f38ba8; }
+
+.cluster-verify-results {
+  margin-top: 12px;
+  padding: 12px;
+  background: #0f1419;
+  border-radius: 8px;
+  border: 1px solid #333;
+}
+.exec-result-item {
+  padding: 8px;
+  margin-bottom: 6px;
+  border-radius: 4px;
+  background: #1a1a2e;
+}
+.exec-ok { border-left: 3px solid #a6e3a1; }
+.exec-fail { border-left: 3px solid #f38ba8; }
+.exec-cmd { color: #89b4fa; font-family: monospace; font-size: 12px; }
+.exec-output { color: #cdd6f4; font-family: monospace; font-size: 11px; margin-top: 4px; white-space: pre-wrap; }
+.exec-error { color: #f38ba8; font-family: monospace; font-size: 11px; margin-top: 4px; }
+
+.progress-io-buttons {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.btn-export-progress, .btn-import-progress, .btn-export-mentor {
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid #45475a;
+  background: #1e1e2e;
+  color: #cdd6f4;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-export-progress:hover, .btn-import-progress:hover, .btn-export-mentor:hover {
+  background: #313244;
+  border-color: #89b4fa;
 }

@@ -823,7 +823,13 @@ def _check_95_sa_authorization(user_yaml: str) -> CheckResult:
     # 模拟 kubectl auth can-i list pods --as=system:serviceaccount:default:<sa_name>
     # 此前 check_fn 只做结构校验（Role/RoleBinding 存在即通过），
     # 但不验证 SA 是否真正获得了对应权限，导致假阳性。
-    if not simulate_rbac_check(state, sa_name, "list", "pods"):
+    # Namespace 感知: 从 RoleBinding 的 metadata.namespace 获取 namespace（默认 default）
+    rb_meta = rb.get("metadata", {})
+    if isinstance(rb_meta, dict):
+        rb_namespace = rb_meta.get("namespace", "default")
+    else:
+        rb_namespace = "default"
+    if not simulate_rbac_check(state, sa_name, "list", "pods", namespace=rb_namespace):
         return CheckResult(
             ok=False,
             error=(

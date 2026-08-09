@@ -3,6 +3,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 from dataclasses import fields as dataclass_fields
+from datetime import datetime, timezone
+import hashlib
+import json
 import logging
 import os
 import traceback
@@ -116,6 +119,20 @@ async def api_check(req: CheckRequest):
         lv = get_level(req.level_id)
         if not lv:
             return CheckResponse(ok=False, error=f"找不到关卡 {req.level_id}")
+
+        # ══ 双轨制: Ch28 集群模式接入真实 kubectl 执行验证 ══
+        # Ch28 (实战级) 在集群模式下，执行真实 kubectl 命令并验证结果
+        # 其他章节 (认知级/基础级) 继续使用模拟器 check_fn
+        if CLUSTER_MGR.enabled and lv.chapter == "ch28":
+            cluster_result = await CLUSTER_MGR.verify_ch28(req.level_id, req.user_yaml)
+            return CheckResponse(
+                ok=cluster_result["ok"],
+                error=cluster_result.get("error", ""),
+                hints=cluster_result.get("hints", []),
+                cluster_state=None,  # 真实集群状态通过 /api/resources 获取
+            )
+
+        # 模拟器模式 (认知级/基础级): 使用 check_fn 校验
         result = lv.check_fn(req.user_yaml)
         state_dict = _build_cluster_state(result.state)
         return CheckResponse(
@@ -135,6 +152,9 @@ async def api_get_level(level_id: str):
     lv = get_level(level_id)
     if not lv:
         return {"error": f"找不到关卡 {level_id}"}
+    # 获取章节 track (关卡 track 优先，否则继承章节 track)
+    ch_meta = CHAPTERS_META.get(lv.chapter, {})
+    track = lv.track or ch_meta.get("track", "基础级")
     return {
         "id": lv.id,
         "chapter": lv.chapter,
@@ -143,6 +163,8 @@ async def api_get_level(level_id: str):
         "starter_yaml": lv.starter_yaml,
         "knowledge_points": KNOWLEDGE_POINTS.get(lv.id, []),
         "xp": LEVEL_XP.get(lv.id, 10),
+        "track": track,
+        "supports_cluster_verify": ch_meta.get("supports_cluster_verify", False),
     }
 
 @app.get("/api/meta")
@@ -393,8 +415,44 @@ async def api_test_connectivity(req: ConnectivityRequest):
 
 @app.get("/api/cluster/status")
 async def api_cluster_status():
-    """获取集群连接状态。"""
-    return CLUSTER_MGR.get_status()
+    """获取集群连接状态，包含双轨制信息。"""
+    status = CLUSTER_MGR.get_status()
+    # 附加双轨制信息
+    status["ch28_cluster_verify"] = CLUSTER_MGR.enabled  # Ch28 集群验证是否可用
+    return status
+
+
+# ═══ v2.3 新增: Ch28 集群验证详细结果端点 ═══
+
+class ClusterCheckRequest(BaseModel):
+    level_id: str
+    user_input: str
+
+
+@app.post("/api/check/cluster")
+async def api_check_cluster(req: ClusterCheckRequest):
+    """Ch28 集群模式验证：返回详细的命令执行结果。
+
+    与 /api/check 的区别：
+    - /api/check 返回简化的 CheckResponse (ok/error/hints)
+    - /api/check/cluster 返回完整的执行结果 (含每条命令的输出)
+
+    仅在集群模式下有效，否则返回模拟器模式提示。
+    """
+    lv = get_level(req.level_id)
+    if not lv:
+        return {"ok": False, "error": f"找不到关卡 {req.level_id}"}
+    if lv.chapter != "ch28":
+        return {"ok": False, "error": "此端点仅支持 Ch28 关卡"}
+    if not CLUSTER_MGR.enabled:
+        return {
+            "ok": False,
+            "mode": "simulator",
+            "error": "集群模式未启用。当前为认知级模式（文本模式匹配）。",
+            "hints": ["设置 K8S_QUEST_MODE=cluster 并配置 KUBECONFIG 以启用实战级验证"],
+        }
+    result = await CLUSTER_MGR.verify_ch28(req.level_id, req.user_input)
+    return result
 
 
 # ═══ v2.0 新增: 交互式 Kubectl 终端 ═══
@@ -424,6 +482,108 @@ async def api_kubectl_whitelist():
         "dangerous": sorted(ClusterManager.DANGEROUS_SUBCOMMANDS),
         "namespace": CLUSTER_MGR.namespace,
         "mode": "cluster" if CLUSTER_MGR.enabled else "simulator",
+    }
+
+
+# ═══ v2.2 新增: 进度导入导出 API ═══
+
+# 校验密钥（可通过环境变量覆盖，防止客户端篡改导出数据）
+PROGRESS_SECRET = os.getenv("K8S_QUEST_PROGRESS_SECRET", "k8s-quest-progress-2024")
+
+
+def _calculate_server_xp(completed_levels: list[str]) -> int:
+    """服务端重新计算 total_xp（不信任客户端提交的值）。
+
+    逻辑与 /api/report 完全一致：
+    1. 每个已完成关卡 +LEVEL_XP
+    2. 章节全部完成 +CHAPTER_BONUS_XP
+    """
+    completed = set(completed_levels)
+    server_xp = sum(LEVEL_XP.get(lid, 10) for lid in completed)
+    for ch_id in CHAPTERS_META:
+        ch_num = int(ch_id[2:])
+        ch_levels = [lid for lid in KNOWLEDGE_POINTS if lid.startswith(f"Q{ch_num}.")]
+        if ch_levels and all(lid in completed for lid in ch_levels):
+            server_xp += CHAPTER_BONUS_XP.get(ch_id, 0)
+    return server_xp
+
+
+def _calculate_checksum(completed_levels: list[str]) -> str:
+    """根据 completed_levels + 服务端密钥生成 SHA-256 校验码。
+
+    用于防止客户端篡改导出的进度数据。
+    """
+    data = json.dumps(sorted(completed_levels), sort_keys=True)
+    return hashlib.sha256((data + PROGRESS_SECRET).encode()).hexdigest()
+
+
+@app.post("/api/progress/export")
+async def api_progress_export(req: ReportRequest):
+    """导出进度：接收学员进度数据，服务端重算 XP，返回带签名的完整 JSON。
+
+    返回字段：
+    - completed_levels / level_attempts / level_first_try / level_time_spent: 原样回传
+    - total_xp: 服务端重新计算（不信任客户端值）
+    - exported_at: 导出时间（ISO 8601）
+    - level_count: 已完成关卡数
+    - completion_rate: 完成率 (0.0 ~ 1.0)
+    - checksum: 防篡改签名
+    """
+    server_xp = _calculate_server_xp(req.completed_levels)
+    total_levels = len(KNOWLEDGE_POINTS)
+    completion_rate = len(req.completed_levels) / total_levels if total_levels > 0 else 0
+    checksum = _calculate_checksum(req.completed_levels)
+
+    return {
+        "completed_levels": req.completed_levels,
+        "level_attempts": req.level_attempts,
+        "level_first_try": req.level_first_try,
+        "level_time_spent": req.level_time_spent,
+        "total_xp": server_xp,
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "level_count": len(req.completed_levels),
+        "completion_rate": completion_rate,
+        "checksum": checksum,
+    }
+
+
+class ImportRequest(BaseModel):
+    """导入进度数据（与导出 JSON 结构一致）。"""
+    completed_levels: list[str] = []
+    level_attempts: dict[str, int] = {}
+    level_first_try: list[str] = []
+    level_time_spent: dict[str, int] = {}
+    total_xp: int = 0
+    exported_at: str = ""
+    level_count: int = 0
+    completion_rate: float = 0.0
+    checksum: str = ""
+
+
+@app.post("/api/progress/import")
+async def api_progress_import(req: ImportRequest):
+    """导入进度：验证 checksum，返回验证结果。
+
+    - 验证通过: 返回 valid=True + 服务端重算的统计信息
+    - 验证失败: 返回 valid=False
+    - 不存储到服务端（个人工具，仅验证）
+    """
+    expected_checksum = _calculate_checksum(req.completed_levels)
+    valid = req.checksum == expected_checksum
+
+    if valid:
+        server_xp = _calculate_server_xp(req.completed_levels)
+        total_levels = len(KNOWLEDGE_POINTS)
+        completion_rate = len(req.completed_levels) / total_levels if total_levels > 0 else 0
+    else:
+        server_xp = 0
+        completion_rate = 0.0
+
+    return {
+        "valid": valid,
+        "total_xp": server_xp,
+        "completion_rate": completion_rate,
+        "level_count": len(req.completed_levels),
     }
 
 

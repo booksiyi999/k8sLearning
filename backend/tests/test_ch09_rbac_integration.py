@@ -265,3 +265,44 @@ subjects:
         r = get_level("Q9.5").check_fn(yaml_text)
         assert not r.ok
         assert "Role" in r.error
+
+    def test_q95_namespace_isolation(self):
+        """RoleBinding 在 ns-a 不影响 ns-b 的权限（namespace 感知）"""
+        yaml_text = """
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: my-sa
+  namespace: ns-a
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-reader
+  namespace: ns-a
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pod-reader-binding
+  namespace: ns-a
+roleRef:
+  kind: Role
+  name: pod-reader
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: my-sa
+  namespace: ns-a
+"""
+        state = ClusterState()
+        state = apply_manifest(state, yaml_text)
+
+        # 在 ns-a 中有权限
+        assert simulate_rbac_check(state, "my-sa", "list", "pods", namespace="ns-a") is True
+        # 在 ns-b 中无权限（RoleBinding 只在 ns-a 生效）
+        assert simulate_rbac_check(state, "my-sa", "list", "pods", namespace="ns-b") is False

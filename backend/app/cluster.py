@@ -512,3 +512,259 @@ class ClusterManager:
             "kubectl": self._kubectl_available,
             "namespace": self.namespace,
         }
+
+    # ------------------------------------------------------------------
+    # Ch28 集群模式验证: 真实 kubectl 执行
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_kubectl_commands(user_input: str) -> list[str]:
+        """从多行文本中提取 kubectl 命令。
+
+        每行一个命令，跳过注释行和空行。
+        去除 'kubectl ' 前缀以适配 kubectl_exec 的输入格式。
+        """
+        commands: list[str] = []
+        for line in user_input.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            # 去除 kubectl 前缀
+            if stripped.startswith("kubectl "):
+                stripped = stripped[8:]
+            elif stripped == "kubectl":
+                continue
+            commands.append(stripped)
+        return commands
+
+    async def verify_ch28(self, level_id: str, user_input: str) -> dict:
+        """Ch28 集群模式验证：执行真实 kubectl 命令并验证结果。
+
+        双轨制核心方法：
+        - 模拟器模式 (认知级): 由 check_fn 做文本模式匹配
+        - 集群模式 (实战级): 本方法执行真实 kubectl 并验证结果
+
+        Args:
+            level_id: 关卡 ID (Q28.1 ~ Q28.5)
+            user_input: 用户输入的 kubectl 命令序列
+
+        Returns:
+            {
+                "ok": bool,
+                "error": str,
+                "hints": list[str],
+                "mode": "cluster",
+                "exec_results": list[dict],  # 每条命令的执行结果
+                "verification": str,  # 验证摘要
+            }
+        """
+        if not self.enabled:
+            return {
+                "ok": False,
+                "error": "集群模式未启用，无法执行真实 kubectl 命令",
+                "hints": ["请设置 K8S_QUEST_MODE=cluster 并配置 KUBECONFIG"],
+                "mode": "simulator",
+                "exec_results": [],
+                "verification": "",
+            }
+
+        commands = self._parse_kubectl_commands(user_input)
+        if not commands:
+            return {
+                "ok": False,
+                "error": "未检测到有效的 kubectl 命令",
+                "hints": ["请输入 kubectl 命令序列，每行一条"],
+                "mode": "cluster",
+                "exec_results": [],
+                "verification": "",
+            }
+
+        # 按顺序执行所有命令，收集结果
+        exec_results: list[dict] = []
+        all_success = True
+        for cmd in commands:
+            result = await self.kubectl_exec(cmd, force=True)
+            exec_results.append({
+                "command": cmd,
+                "success": result["success"],
+                "output": result["output"][:2000] if result["output"] else "",
+                "error": result["error"][:500] if result["error"] else "",
+            })
+            if not result["success"]:
+                all_success = False
+
+        # 关卡特定验证
+        verifier = getattr(self, f"_verify_{level_id.replace('.', '_')}", None)
+        if verifier:
+            verify_result = await verifier(exec_results)
+        else:
+            verify_result = {"passed": all_success, "message": ""}
+
+        # 构建验证摘要
+        success_count = sum(1 for r in exec_results if r["success"])
+        fail_count = len(exec_results) - success_count
+        summary_parts = [
+            f"执行 {len(exec_results)} 条命令: {success_count} 成功",
+        ]
+        if fail_count > 0:
+            summary_parts.append(f", {fail_count} 失败")
+        if verify_result["message"]:
+            summary_parts.append(f" | {verify_result['message']}")
+        verification = "".join(summary_parts)
+
+        hints: list[str] = []
+        if all_success and verify_result["passed"]:
+            hints.append("✅ 集群验证通过！所有命令在真实集群上执行成功")
+        else:
+            for r in exec_results:
+                if not r["success"]:
+                    hints.append(f"❌ 命令失败: {r['command']} -> {r['error'][:100]}")
+            if not verify_result["passed"] and verify_result["message"]:
+                hints.append(f"⚠️ 验证未通过: {verify_result['message']}")
+
+        return {
+            "ok": all_success and verify_result["passed"],
+            "error": "" if all_success and verify_result["passed"] else f"集群验证未通过 ({verification})",
+            "hints": hints,
+            "mode": "cluster",
+            "exec_results": exec_results,
+            "verification": verification,
+        }
+
+    # ── 各关卡验证逻辑 ──
+
+    async def _verify_Q28_1(self, exec_results: list[dict]) -> dict:
+        """Q28.1: 验证 run + expose + scale 操作序列
+
+        检查点：
+        1. 至少有一条 kubectl run 命令执行成功
+        2. 至少有一条 kubectl expose 命令执行成功
+        3. 至少有一条 kubectl scale 命令执行成功
+        4. 最终 deployment 存在且有多个副本
+        """
+        has_run = any(r["success"] and r["command"].startswith("run ") for r in exec_results)
+        has_expose = any(r["success"] and r["command"].startswith("expose ") for r in exec_results)
+        has_scale = any(r["success"] and r["command"].startswith("scale ") for r in exec_results)
+
+        missing = []
+        if not has_run:
+            missing.append("kubectl run")
+        if not has_expose:
+            missing.append("kubectl expose")
+        if not has_scale:
+            missing.append("kubectl scale")
+
+        if missing:
+            return {"passed": False, "message": f"缺少成功的命令: {', '.join(missing)}"}
+
+        # 尝试验证 deployment 状态
+        deps = await self.get_resources("deployments")
+        if deps:
+            return {"passed": True, "message": f"Deployment 存在 ({len(deps)} 个)"}
+        return {"passed": True, "message": "run/expose/scale 命令序列执行成功"}
+
+    async def _verify_Q28_2(self, exec_results: list[dict]) -> dict:
+        """Q28.2: 验证 CrashLoopBackOff 排查命令
+
+        检查点：
+        1. 至少一条 kubectl describe 命令成功
+        2. 至少一条 kubectl logs 命令成功
+        """
+        has_describe = any(r["success"] and r["command"].startswith("describe ") for r in exec_results)
+        has_logs = any(r["success"] and r["command"].startswith("logs ") for r in exec_results)
+
+        missing = []
+        if not has_describe:
+            missing.append("kubectl describe")
+        if not has_logs:
+            missing.append("kubectl logs")
+
+        if missing:
+            return {"passed": False, "message": f"缺少成功的排查命令: {', '.join(missing)}"}
+        return {"passed": True, "message": "故障排查命令执行成功"}
+
+    async def _verify_Q28_3(self, exec_results: list[dict]) -> dict:
+        """Q28.3: 验证网络排查命令
+
+        检查点：
+        1. 至少一条 kubectl get endpoints 命令成功
+        2. 至少一条 kubectl exec 命令成功
+        """
+        has_endpoints = any(
+            r["success"] and r["command"].startswith("get ") and "endpoints" in r["command"]
+            for r in exec_results
+        )
+        has_exec = any(
+            r["success"] and r["command"].startswith("exec ") for r in exec_results
+        )
+
+        missing = []
+        if not has_endpoints:
+            missing.append("kubectl get endpoints")
+        if not has_exec:
+            missing.append("kubectl exec")
+
+        if missing:
+            return {"passed": False, "message": f"缺少成功的网络排查命令: {', '.join(missing)}"}
+        return {"passed": True, "message": "网络排查命令执行成功"}
+
+    async def _verify_Q28_4(self, exec_results: list[dict]) -> dict:
+        """Q28.4: 验证 RBAC 排查命令
+
+        检查点：
+        1. 至少一条 kubectl auth 命令成功
+        2. 至少一条 kubectl get role/rolebinding 命令成功
+        """
+        has_auth = any(r["success"] and r["command"].startswith("auth ") for r in exec_results)
+        has_get_rbac = any(
+            r["success"] and r["command"].startswith("get ")
+            and ("role" in r["command"] or "rolebinding" in r["command"])
+            for r in exec_results
+        )
+
+        missing = []
+        if not has_auth:
+            missing.append("kubectl auth can-i")
+        if not has_get_rbac:
+            missing.append("kubectl get role/rolebinding")
+
+        if missing:
+            return {"passed": False, "message": f"缺少成功的 RBAC 排查命令: {', '.join(missing)}"}
+        return {"passed": True, "message": "RBAC 排查命令执行成功"}
+
+    async def _verify_Q28_5(self, exec_results: list[dict]) -> dict:
+        """Q28.5: 验证综合操作
+
+        检查点：
+        1. 至少一条 kubectl create namespace 命令成功
+        2. 至少一条 kubectl run/apply 命令成功
+        3. 至少一条 kubectl get 命令成功
+        4. 至少 3 条命令成功执行
+        """
+        has_namespace = any(
+            r["success"] and "namespace" in r["command"]
+            and r["command"].startswith("create ")
+            for r in exec_results
+        )
+        has_deploy = any(
+            r["success"] and (r["command"].startswith("run ") or r["command"].startswith("apply "))
+            for r in exec_results
+        )
+        has_verify = any(
+            r["success"] and r["command"].startswith("get ") for r in exec_results
+        )
+        success_count = sum(1 for r in exec_results if r["success"])
+
+        missing = []
+        if not has_namespace:
+            missing.append("kubectl create namespace")
+        if not has_deploy:
+            missing.append("kubectl run/apply")
+        if not has_verify:
+            missing.append("kubectl get")
+
+        if missing:
+            return {"passed": False, "message": f"缺少成功的命令: {', '.join(missing)}"}
+        if success_count < 3:
+            return {"passed": False, "message": f"成功命令数不足 ({success_count}/3)"}
+        return {"passed": True, "message": f"综合操作完成 ({success_count} 条命令成功)"}

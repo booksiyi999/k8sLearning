@@ -64,6 +64,10 @@ function quest() {
     connectivityService: '',
     connectivityPort: 80,
 
+    // ── Ch28 集群验证状态 ──
+    clusterVerifyResult: null,  // /api/check/cluster 的详细结果
+    isCh28: false,              // 当前关卡是否属于 Ch28
+
     // ═══════════════════════════════════════════
     // 初始化
     // ═══════════════════════════════════════════
@@ -78,7 +82,12 @@ function quest() {
       try {
         const r = await fetch('/api/meta');
         this.meta = await r.json();
-        this.chapters = this.meta?.chapters || {};
+        const rawChapters = this.meta?.chapters || {};
+        // 按 display_order 排序章节（而非 ch_id），使显示顺序可独立于 ch_id
+        const sortedEntries = Object.entries(rawChapters).sort(
+          (a, b) => (a[1].display_order ?? 999) - (b[1].display_order ?? 999)
+        );
+        this.chapters = Object.fromEntries(sortedEntries);
       } catch (e) { console.error('loadMeta:', e); }
     },
 
@@ -103,9 +112,11 @@ function quest() {
         this.currentLevel = lv;
         this.userYaml = lv.starter_yaml || '';
         this.result = null;
+        this.clusterVerifyResult = null;
         this.hintShown = false;
         this.hints = lv.hints || [];
         this.lesson = null;
+        this.isCh28 = lv.chapter === 'ch28';
         this.renderedDescription = this.renderMarkdown(lv.description || '');
         this.levelStartTime = Date.now();
         this.updateLineNumbers();
@@ -204,6 +215,7 @@ function quest() {
       if (!this.currentLevel || this.running) return;
       this.running = true;
       this.result = null;
+      this.clusterVerifyResult = null;
       const lid = this.currentLevel.id;
       this.progress.level_attempts[lid] = (this.progress.level_attempts[lid] || 0) + 1;
 
@@ -214,6 +226,17 @@ function quest() {
           body: JSON.stringify({ level_id: lid, user_yaml: this.userYaml })
         });
         this.result = await r.json();
+        // Ch28 集群模式: 获取详细的命令执行结果
+        if (this.isCh28 && this.clusterMode) {
+          try {
+            const r2 = await fetch('/api/check/cluster', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ level_id: lid, user_input: this.userYaml })
+            });
+            this.clusterVerifyResult = await r2.json();
+          } catch(e) { /* 静默失败, /api/check 结果已足够 */ }
+        }
         if (this.result.ok) this.onPass(lid);
         else this.onFail(lid);
       } catch (e) {
@@ -427,6 +450,224 @@ h1{color:#ff6b9d}table{width:100%;border-collapse:collapse;margin:16px 0}td,th{p
       this.showToast('📥 报告已导出', 'success');
     },
 
+    // ═══════════════════════════════════════════════
+    // 进度导入导出 (v2.2)
+    // ═══════════════════════════════════════════════
+
+    async exportProgress() {
+      try {
+        const r = await fetch('/api/progress/export', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            completed_levels: this.progress.completed_levels,
+            level_attempts: this.progress.level_attempts,
+            level_first_try: this.progress.level_first_try,
+            level_time_spent: this.progress.level_time_spent,
+            total_xp: this.progress.total_xp,
+          })
+        });
+        const data = await r.json();
+        // 下载 JSON 文件
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const today = new Date().toISOString().slice(0, 10);
+        a.href = url;
+        a.download = `k8s-quest-progress-${today}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        // 同步更新本地 XP 为服务端计算值
+        if (data.total_xp !== this.progress.total_xp) {
+          this.progress.total_xp = data.total_xp;
+          this.saveProgress();
+        }
+        this.showToast(`📤 进度已导出 (${data.level_count} 关 · ${data.total_xp} XP)`, 'success');
+      } catch (e) {
+        this.showToast('导出失败: ' + e, 'error');
+      }
+    },
+
+    async importProgress(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+        const r = await fetch('/api/progress/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(parsed)
+        });
+        const result = await r.json();
+        if (result.valid) {
+          // 验证通过，更新 localStorage
+          this.progress.completed_levels = parsed.completed_levels || [];
+          this.progress.level_attempts = parsed.level_attempts || {};
+          this.progress.level_first_try = parsed.level_first_try || [];
+          this.progress.level_time_spent = parsed.level_time_spent || {};
+          this.progress.total_xp = result.total_xp;
+          this.saveProgress();
+          this.showToast(`📥 导入成功！${result.level_count} 关 · ${result.total_xp} XP`, 'success');
+          // 刷新页面显示
+          setTimeout(() => location.reload(), 1200);
+        } else {
+          this.showToast('❌ 导入失败：进度文件校验不通过（可能被篡改）', 'error');
+        }
+      } catch (e) {
+        if (e instanceof SyntaxError) {
+          this.showToast('❌ 导入失败：文件不是有效的 JSON', 'error');
+        } else {
+          this.showToast('❌ 导入失败: ' + e, 'error');
+        }
+      }
+      // 清空 input 以便重复导入同一文件
+      event.target.value = '';
+    },
+
+    exportMentorReport() {
+      if (!this.reportData) return;
+      const r = this.reportData;
+      const today = new Date().toLocaleDateString('zh-CN');
+      const studentName = prompt('请输入学员姓名（可留空）:', '') || '匿名学员';
+
+      // 知识域掌握度表格
+      const domains = Object.entries(r.domain_stats || {}).map(([d, s]) => {
+        const pct = Math.round(s.rate * 100);
+        const bar = '█'.repeat(Math.round(pct / 10)) + '░'.repeat(10 - Math.round(pct / 10));
+        return `<tr><td>${d}</td><td>${s.completed}/${s.total}</td><td>${bar}</td><td>${pct}%</td></tr>`;
+      }).join('');
+
+      // 章节完成情况
+      const chapters = Object.entries(r.chapter_stats || {}).map(([chId, s]) => {
+        const pct = Math.round(s.rate * 100);
+        return `<tr><td>${s.icon} ${s.title}</td><td>${s.completed}/${s.total}</td><td>${pct}%</td></tr>`;
+      }).join('');
+
+      // 薄弱项
+      const weaks = (r.weak_areas || []).map(w =>
+        `<tr><td>${w.level_id}</td><td>${w.reason}</td><td>${w.knowledge_points.join(', ')}</td></tr>`
+      ).join('');
+
+      // 优势项
+      const strengths = (r.strengths || []).map(s =>
+        `<li>${s.level_id} (${s.knowledge_points.join(', ')})</li>`
+      ).join('');
+
+      // 学习建议
+      const recs = (r.recommendations || []).map(rec => `<li>${rec}</li>`).join('');
+
+      const colors = { S: '#ffd700', A: '#98c379', B: '#61afef', C: '#d19a66', D: '#e06c75' };
+
+      const html = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>K8s 实战学堂 - 导师报告 (${studentName})</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:system-ui,-apple-system,sans-serif;background:#f5f5f5;color:#333;line-height:1.6;padding:20px}
+.report-container{max-width:900px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.1)}
+.report-header{background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:#fff;padding:30px;text-align:center}
+.report-header h1{font-size:28px;margin-bottom:8px}
+.report-header .subtitle{font-size:14px;opacity:0.9}
+.report-body{padding:30px}
+.section{margin-bottom:28px}
+.section h2{font-size:18px;color:#333;border-left:4px solid #667eea;padding-left:10px;margin-bottom:12px}
+.student-info{display:flex;gap:30px;background:#f8f9fa;padding:16px;border-radius:8px;margin-bottom:20px;flex-wrap:wrap}
+.student-info div{font-size:14px}
+.student-info strong{color:#667eea}
+.grade-display{text-align:center;padding:20px;background:#f8f9fa;border-radius:8px;margin-bottom:20px}
+.grade-display .grade{font-size:56px;font-weight:900;color:${colors[r.grade]||'#333'}}
+.grade-display .comment{font-size:14px;color:#666;margin-top:4px}
+.summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:20px}
+.summary-card{text-align:center;padding:16px;background:#f8f9fa;border-radius:8px}
+.summary-card .value{font-size:24px;font-weight:700;color:#333}
+.summary-card .label{font-size:12px;color:#888;margin-top:4px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:8px 10px;border:1px solid #e0e0e0;text-align:left}
+th{background:#f5f5f5;font-weight:600}
+.bar{font-family:monospace;color:#667eea}
+.weak-list,.strength-list,.rec-list{list-style:none;padding-left:0}
+.weak-list li,.rec-list li{padding:6px 10px;background:#fff5f5;border-left:3px solid #e06c75;margin-bottom:4px;border-radius:4px}
+.strength-list li{padding:6px 10px;background:#f0fff0;border-left:3px solid #98c379;margin-bottom:4px;border-radius:4px}
+.report-footer{text-align:center;padding:16px;background:#f8f9fa;color:#999;font-size:12px;border-top:1px solid #eee}
+@media print{body{background:#fff;padding:0}.report-container{box-shadow:none;border-radius:0}}
+</style></head><body>
+<div class="report-container">
+  <div class="report-header">
+    <h1>🚀 K8s 实战学堂 - 学员进度报告</h1>
+    <div class="subtitle">导师专用报告 · ${today}</div>
+  </div>
+  <div class="report-body">
+    <!-- 学员信息 -->
+    <div class="student-info">
+      <div>学员姓名：<strong>${studentName}</strong></div>
+      <div>当前称号：<strong>${r.rank}</strong></div>
+      <div>报告日期：<strong>${today}</strong></div>
+    </div>
+
+    <!-- 成绩评定 -->
+    <div class="grade-display">
+      <div class="grade">${r.grade}</div>
+      <div class="comment">${r.grade_comment}</div>
+    </div>
+
+    <!-- 综合数据 -->
+    <div class="summary-grid">
+      <div class="summary-card"><div class="value" style="color:#ff6b9d">${r.completed_count}/${r.total_levels}</div><div class="label">关卡完成</div></div>
+      <div class="summary-card"><div class="value" style="color:#ffd700">${r.total_xp}</div><div class="label">总 XP</div></div>
+      <div class="summary-card"><div class="value" style="color:#98c379">${Math.round(r.completion_rate*100)}%</div><div class="label">完成率</div></div>
+      <div class="summary-card"><div class="value" style="color:#61afef">${r.first_try_count}</div><div class="label">一次通过</div></div>
+      <div class="summary-card"><div class="value" style="color:#c678dd">${r.total_attempts}</div><div class="label">总尝试次数</div></div>
+      <div class="summary-card"><div class="value" style="color:#e06c75">${this.formatTime(r.total_time_spent)}</div><div class="label">总学习时长</div></div>
+    </div>
+
+    <!-- 知识域掌握度 -->
+    <div class="section">
+      <h2>📈 知识域掌握度</h2>
+      <table><thead><tr><th>知识域</th><th>完成</th><th>进度条</th><th>完成率</th></tr></thead><tbody>${domains}</tbody></table>
+    </div>
+
+    <!-- 章节完成情况 -->
+    <div class="section">
+      <h2>📖 章节完成情况</h2>
+      <table><thead><tr><th>章节</th><th>完成</th><th>完成率</th></tr></thead><tbody>${chapters}</tbody></table>
+    </div>
+
+    <!-- 薄弱项 -->
+    <div class="section" ${r.weak_areas.length === 0 ? 'style="display:none"' : ''}>
+      <h2>⚠️ 薄弱项分析</h2>
+      <table><thead><tr><th>关卡</th><th>原因</th><th>知识点</th></tr></thead><tbody>${weaks}</tbody></table>
+    </div>
+
+    <!-- 优势项 -->
+    <div class="section" ${r.strengths.length === 0 ? 'style="display:none"' : ''}>
+      <h2>⭐ 优势项（一次通过）</h2>
+      <ul class="strength-list">${strengths || '<li>暂无</li>'}</ul>
+    </div>
+
+    <!-- 学习建议 -->
+    <div class="section" ${r.recommendations.length === 0 ? 'style="display:none"' : ''}>
+      <h2>💡 学习建议</h2>
+      <ul class="rec-list">${recs || '<li>继续保持！</li>'}</ul>
+    </div>
+  </div>
+  <div class="report-footer">
+    本报告由 K8s 实战学堂自动生成 · 服务端验证 · 数据可信<br>
+    生成时间：${new Date().toLocaleString('zh-CN')}
+  </div>
+</div>
+</body></html>`;
+
+      const blob = new Blob([html], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `k8s-quest-mentor-report-${studentName}-${today}.html`;
+      a.click();
+      URL.revokeObjectURL(url);
+      this.showToast('📤 导师报告已导出', 'success');
+    },
+
     // ═══════════════════════════════════════════
     // 重置
     // ═══════════════════════════════════════════
@@ -521,6 +762,35 @@ h1{color:#ff6b9d}table{width:100%;border-collapse:collapse;margin:16px 0}td,th{p
     },
 
     isCompleted(lid) { return this.progress.completed_levels.includes(lid); },
+
+    // ── 双轨制: 章节赛道标签 ──
+    chapterTrack(chId) {
+      return this.chapters?.[chId]?.track || '基础级';
+    },
+
+    trackIcon(track) {
+      const icons = { '基础级': '📗', '认知级': '📘', '实战级': '📙' };
+      return icons[track] || '📗';
+    },
+
+    trackClass(track) {
+      const classes = { '基础级': 'track-basic', '认知级': 'track-cognitive', '实战级': 'track-practical' };
+      return classes[track] || 'track-basic';
+    },
+
+    // 当前关卡的检查按钮文本
+    get checkButtonLabel() {
+      if (this.running) return '⏳ 检查中...';
+      if (this.isCh28 && this.clusterMode) return '▶ 集群验证';
+      return '▶ 模拟器校验';
+    },
+
+    // 当前关卡是否为实战级 (支持集群验证)
+    get isPracticalTrack() {
+      if (!this.currentLevel) return false;
+      const chId = this.currentLevel.chapter;
+      return this.chapters?.[chId]?.track === '实战级';
+    },
 
     // ── 计算属性 ──
     get currentRank() {

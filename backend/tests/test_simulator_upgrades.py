@@ -10,6 +10,8 @@ from app.simulator import (
     apply_manifest,
     simulate_rbac_check,
     simulate_traffic,
+    get_resources_in_namespace,
+    _get_pod_namespace,
 )
 
 
@@ -480,3 +482,323 @@ spec:
         result = simulate_traffic(state, "web-pod", "api-pod", 8080)
         assert result["allowed"] is True
         assert "allow-all-ingress" in result["matched_policies"]
+
+
+# ===== Namespace 感知测试 =====
+
+
+class TestRbacNamespaceIsolation:
+    """Namespace 隔离: RoleBinding 在 ns-A 不影响 ns-B 的权限"""
+
+    def test_rbac_namespace_isolation(self):
+        """RoleBinding 在 ns-A 不影响 ns-B 的权限检查"""
+        yaml_text = """
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: my-sa
+  namespace: ns-a
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-reader
+  namespace: ns-a
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pod-reader-binding
+  namespace: ns-a
+roleRef:
+  kind: Role
+  name: pod-reader
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: my-sa
+  namespace: ns-a
+"""
+        state = ClusterState()
+        state = apply_manifest(state, yaml_text)
+
+        # 在 ns-a 中: SA 有 list pods 权限
+        assert simulate_rbac_check(state, "my-sa", "list", "pods", namespace="ns-a") is True
+        # 在 ns-b 中: SA 没有 list pods 权限（RoleBinding 只在 ns-a 生效）
+        assert simulate_rbac_check(state, "my-sa", "list", "pods", namespace="ns-b") is False
+
+    def test_rbac_default_namespace_compatibility(self):
+        """不传 namespace 参数时默认使用 'default'，向后兼容"""
+        yaml_text = """
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-reader
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pod-reader-binding
+roleRef:
+  kind: Role
+  name: pod-reader
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: my-sa
+  namespace: default
+"""
+        state = ClusterState()
+        state = apply_manifest(state, yaml_text)
+
+        # 不传 namespace -> 默认 default -> 权限生效
+        assert simulate_rbac_check(state, "my-sa", "list", "pods") is True
+        # 传 namespace=default -> 权限生效
+        assert simulate_rbac_check(state, "my-sa", "list", "pods", namespace="default") is True
+
+    def test_clusterrolebinding_works_across_namespaces(self):
+        """ClusterRoleBinding 在所有 namespace 生效"""
+        yaml_text = """
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: admin-sa
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pod-reader-cluster
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: admin-binding
+roleRef:
+  kind: ClusterRole
+  name: pod-reader-cluster
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: admin-sa
+  namespace: default
+"""
+        state = ClusterState()
+        state = apply_manifest(state, yaml_text)
+
+        # ClusterRoleBinding 在任意 namespace 都生效
+        assert simulate_rbac_check(state, "admin-sa", "list", "pods", namespace="default") is True
+        assert simulate_rbac_check(state, "admin-sa", "list", "pods", namespace="ns-x") is True
+        assert simulate_rbac_check(state, "admin-sa", "list", "pods", namespace="ns-y") is True
+
+
+class TestTrafficCrossNamespace:
+    """NetworkPolicy 跨 namespace 隔离测试"""
+
+    def test_traffic_cross_namespace_isolation(self):
+        """NetworkPolicy 只影响同 namespace 的 Pod"""
+        yaml_text = """
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web-pod
+  namespace: ns-a
+  labels:
+    app: web
+spec:
+  containers:
+  - name: nginx
+    image: nginx
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: db-pod
+  namespace: ns-a
+  labels:
+    app: database
+spec:
+  containers:
+  - name: postgres
+    image: postgres
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: db-pod-b
+  namespace: ns-b
+  labels:
+    app: database
+spec:
+  containers:
+  - name: postgres
+    image: postgres
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ns-a
+  namespace: ns-a
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+"""
+        state = ClusterState()
+        state = apply_manifest(state, yaml_text)
+
+        # ns-a 中的 db-pod 被 NetworkPolicy 管控 -> 拒绝
+        result_a = simulate_traffic(state, "web-pod", "db-pod", 5432)
+        assert result_a["allowed"] is False
+        assert "default-deny-ns-a" in result_a["matched_policies"]
+
+        # ns-b 中的 db-pod-b 不被 ns-a 的 NetworkPolicy 管控 -> 默认允许
+        result_b = simulate_traffic(state, "web-pod", "db-pod-b", 5432)
+        assert result_b["allowed"] is True
+        assert result_b["matched_policies"] == []
+
+    def test_traffic_default_namespace_compatibility(self):
+        """Pod 和 NetworkPolicy 都不指定 namespace 时默认 default，向后兼容"""
+        yaml_text = """
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web-pod
+  labels:
+    app: web
+spec:
+  containers:
+  - name: nginx
+    image: nginx
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: db-pod
+  labels:
+    app: database
+spec:
+  containers:
+  - name: postgres
+    image: postgres
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-web-to-db
+spec:
+  podSelector:
+    matchLabels:
+      app: database
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: web
+    ports:
+    - protocol: TCP
+      port: 5432
+"""
+        state = ClusterState()
+        state = apply_manifest(state, yaml_text)
+
+        # 都在 default namespace -> 策略生效
+        result = simulate_traffic(state, "web-pod", "db-pod", 5432)
+        assert result["allowed"] is True
+        assert "allow-web-to-db" in result["matched_policies"]
+
+
+class TestNamespaceHelpers:
+    """辅助函数测试"""
+
+    def test_get_pod_namespace_default(self):
+        """Pod 没有 namespace 时返回 default"""
+        yaml_text = """
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-pod
+  labels:
+    app: test
+spec:
+  containers:
+  - name: c
+    image: nginx
+"""
+        state = ClusterState()
+        state = apply_manifest(state, yaml_text)
+        assert _get_pod_namespace(state, "test-pod") == "default"
+
+    def test_get_pod_namespace_custom(self):
+        """Pod 有 namespace 时返回对应的 namespace"""
+        yaml_text = """
+apiVersion: v1
+kind: Pod
+metadata:
+  name: test-pod
+  namespace: my-ns
+  labels:
+    app: test
+spec:
+  containers:
+  - name: c
+    image: nginx
+"""
+        state = ClusterState()
+        state = apply_manifest(state, yaml_text)
+        assert _get_pod_namespace(state, "test-pod") == "my-ns"
+
+    def test_get_pod_namespace_nonexistent(self):
+        """不存在的 Pod 返回 default"""
+        state = ClusterState()
+        assert _get_pod_namespace(state, "nonexistent") == "default"
+
+    def test_get_resources_in_namespace(self):
+        """按 namespace 过滤资源"""
+        yaml_text = """
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: role-a
+  namespace: ns-a
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: role-b
+  namespace: ns-b
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get"]
+"""
+        state = ClusterState()
+        state = apply_manifest(state, yaml_text)
+
+        ns_a_roles = get_resources_in_namespace(state, "roles", "ns-a")
+        assert "role-a" in ns_a_roles
+        assert "role-b" not in ns_a_roles
+
+        ns_b_roles = get_resources_in_namespace(state, "roles", "ns-b")
+        assert "role-b" in ns_b_roles
+        assert "role-a" not in ns_b_roles
+
+        default_roles = get_resources_in_namespace(state, "roles", "default")
+        assert len(default_roles) == 0

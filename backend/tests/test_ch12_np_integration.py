@@ -653,3 +653,105 @@ spec:
 """
         r = get_level("Q12.4").check_fn(yaml)
         assert r.ok, r.error
+
+
+# ===== Namespace 感知集成测试 =====
+
+
+class TestSimulateTrafficNamespaceIsolation:
+    """NetworkPolicy 跨 namespace 隔离测试"""
+
+    def test_networkpolicy_only_affects_same_namespace_pod(self):
+        """NetworkPolicy 只影响同 namespace 的 Pod"""
+        pods_yaml = """\
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web-pod
+  namespace: ns-a
+  labels:
+    app: web
+spec:
+  containers:
+  - name: nginx
+    image: nginx
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: db-pod
+  namespace: ns-a
+  labels:
+    app: database
+spec:
+  containers:
+  - name: postgres
+    image: postgres
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: db-pod-other
+  namespace: ns-b
+  labels:
+    app: database
+spec:
+  containers:
+  - name: postgres
+    image: postgres
+"""
+        state = ClusterState()
+        state = preset_state(state, pods_yaml)
+        policy_yaml = """\
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ns-a
+  namespace: ns-a
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+"""
+        state = apply_manifest(state, policy_yaml)
+
+        # ns-a 中的 db-pod 被 NetworkPolicy 管控 -> 拒绝
+        result_a = simulate_traffic(state, "web-pod", "db-pod", 5432)
+        assert result_a["allowed"] is False
+        assert "default-deny-ns-a" in result_a["matched_policies"]
+
+        # ns-b 中的 db-pod-other 不被 ns-a 的 NetworkPolicy 管控 -> 默认允许
+        result_b = simulate_traffic(state, "web-pod", "db-pod-other", 5432)
+        assert result_b["allowed"] is True
+        assert result_b["matched_policies"] == []
+
+    def test_default_namespace_backward_compatible(self):
+        """Pod 和 NetworkPolicy 都在 default namespace（不指定）时正常工作"""
+        state = ClusterState()
+        state = preset_state(state, PODS_FRONTEND_BACKEND)
+        policy_yaml = """\
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend-to-backend
+spec:
+  podSelector:
+    matchLabels:
+      app: backend
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: frontend
+    ports:
+    - protocol: TCP
+      port: 80
+"""
+        state = apply_manifest(state, policy_yaml)
+
+        # 默认 namespace 下策略正常生效
+        result = simulate_traffic(state, "frontend-pod", "backend-pod", 80)
+        assert result["allowed"] is True
+        assert "allow-frontend-to-backend" in result["matched_policies"]

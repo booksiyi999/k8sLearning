@@ -12,6 +12,8 @@ CHAPTERS_META = {
         "color": "#6366f1",
         "description": "零基础起步：控制面/数据面架构、声明式模型、kubectl 全链路",
         "difficulty": "入门",
+        "display_order": 0,
+        "track": "基础级",
     },
     "ch01": {
         "title": "Pod 基础",
@@ -19,6 +21,8 @@ CHAPTERS_META = {
         "color": "#4caf50",
         "description": "K8s 最小调度单元，从这里开始你的旅程",
         "difficulty": 1,
+        "display_order": 1,
+        "track": "基础级",
     },
     "ch02": {
         "title": "Deployment",
@@ -26,6 +30,8 @@ CHAPTERS_META = {
         "color": "#2196f3",
         "description": "管理 Pod 的期望状态，实现弹性伸缩与滚动更新",
         "difficulty": 2,
+        "display_order": 2,
+        "track": "基础级",
     },
     "ch03": {
         "title": "Service 网络",
@@ -33,6 +39,8 @@ CHAPTERS_META = {
         "color": "#ff9800",
         "description": "服务发现与负载均衡，让 Pod 之间能互相通信",
         "difficulty": 2,
+        "display_order": 3,
+        "track": "基础级",
     },
     "ch04": {
         "title": "配置管理",
@@ -40,6 +48,8 @@ CHAPTERS_META = {
         "color": "#9c27b0",
         "description": "ConfigMap 与 Secret，将配置与镜像解耦",
         "difficulty": 3,
+        "display_order": 4,
+        "track": "基础级",
     },
     "ch05": {
         "title": "存储",
@@ -47,6 +57,8 @@ CHAPTERS_META = {
         "color": "#00bcd4",
         "description": "PV/PVC 体系，让数据比 Pod 活得更久",
         "difficulty": 3,
+        "display_order": 5,
+        "track": "基础级",
     },
     "ch06": {
         "title": "调度",
@@ -54,6 +66,8 @@ CHAPTERS_META = {
         "color": "#f44336",
         "description": "控制 Pod 跑在哪个节点上，高级调度策略",
         "difficulty": 4,
+        "display_order": 6,
+        "track": "基础级",
     },
     "ch07": {
         "title": "Job/CronJob",
@@ -61,6 +75,8 @@ CHAPTERS_META = {
         "color": "#795548",
         "description": "批量任务与定时任务，运行完成即退出",
         "difficulty": 3,
+        "display_order": 7,
+        "track": "基础级",
     },
     "ch08": {
         "title": "StatefulSet",
@@ -68,6 +84,8 @@ CHAPTERS_META = {
         "color": "#607d8b",
         "description": "有状态应用管理，稳定 Pod 身份与持久化",
         "difficulty": 4,
+        "display_order": 8,
+        "track": "基础级",
     },
     "ch09": {
         "title": "RBAC",
@@ -75,6 +93,8 @@ CHAPTERS_META = {
         "color": "#ff5722",
         "description": "基于角色的访问控制，权限管理",
         "difficulty": 4,
+        "display_order": 9,
+        "track": "基础级",
     },
     "ch10": {
         "title": "HPA",
@@ -82,6 +102,8 @@ CHAPTERS_META = {
         "color": "#4caf50",
         "description": "水平 Pod 自动伸缩，根据负载动态扩缩容",
         "difficulty": 3,
+        "display_order": 10,
+        "track": "基础级",
     },
     "ch11": {
         "title": "Ingress",
@@ -89,6 +111,8 @@ CHAPTERS_META = {
         "color": "#2196f3",
         "description": "七层负载均衡，域名与路径路由",
         "difficulty": 3,
+        "display_order": 11,
+        "track": "基础级",
     },
     "ch12": {
         "title": "NetworkPolicy",
@@ -96,6 +120,8 @@ CHAPTERS_META = {
         "color": "#9c27b0",
         "description": "网络策略，Pod 间流量控制与安全隔离",
         "difficulty": 5,
+        "display_order": 12,
+        "track": "基础级",
     },
     "ch13": {
         "title": "DaemonSet",
@@ -103,6 +129,8 @@ CHAPTERS_META = {
         "color": "#009688",
         "description": "守护进程集，确保每个节点运行一个 Pod 副本",
         "difficulty": 3,
+        "display_order": 13,
+        "track": "基础级",
     },
     "ch14": {
         "title": "Namespace & Quota",
@@ -110,6 +138,8 @@ CHAPTERS_META = {
         "color": "#e91e63",
         "description": "命名空间与资源配额，多团队资源隔离",
         "difficulty": 4,
+        "display_order": 14,
+        "track": "基础级",
     },
     "ch15": {
         "title": "PodDisruptionBudget",
@@ -117,6 +147,8 @@ CHAPTERS_META = {
         "color": "#00bcd4",
         "description": "中断预算，保护应用在自愿中断时的高可用",
         "difficulty": 3,
+        "display_order": 15,
+        "track": "基础级",
     },
     "ch16": {
         "title": "PriorityClass",
@@ -124,6 +156,8 @@ CHAPTERS_META = {
         "color": "#ff9800",
         "description": "优先级与抢占，确保关键工作负载优先调度",
         "difficulty": 4,
+        "display_order": 16,
+        "track": "基础级",
     },
     "ch17": {
         "title": "CRD & Operator",
@@ -131,6 +165,8 @@ CHAPTERS_META = {
         "color": "#673ab7",
         "description": "自定义资源定义与 Operator 模式，扩展 K8s 能力",
         "difficulty": 5,
+        "display_order": 17,
+        "track": "认知级",
     },
     "ch18": {
         "title": "SA & 安全上下文",
@@ -138,6 +174,8 @@ CHAPTERS_META = {
         "color": "#3f51b5",
         "description": "ServiceAccount 身份与 Pod 安全标准",
         "difficulty": 4,
+        "display_order": 18,
+        "track": "认知级",
     },
     "ch19": {
         "title": "Helm 包管理",
@@ -145,6 +183,8 @@ CHAPTERS_META = {
         "color": "#0d47a1",
         "description": "Helm Chart 打包、模板渲染与依赖管理",
         "difficulty": 4,
+        "display_order": 19,
+        "track": "认知级",
     },
     "ch20": {
         "title": "存储进阶",
@@ -152,6 +192,8 @@ CHAPTERS_META = {
         "color": "#00695c",
         "description": "StorageClass、CSI 驱动与 VolumeSnapshot",
         "difficulty": 5,
+        "display_order": 20,
+        "track": "认知级",
     },
     "ch21": {
         "title": "集群维护",
@@ -159,6 +201,8 @@ CHAPTERS_META = {
         "color": "#455a64",
         "description": "etcd 备份恢复、集群升级与节点维护",
         "difficulty": 4,
+        "display_order": 21,
+        "track": "认知级",
     },
     "ch22": {
         "title": "故障排查",
@@ -166,6 +210,8 @@ CHAPTERS_META = {
         "color": "#bf360c",
         "description": "Pod/Service/Node/控制平面故障诊断与修复",
         "difficulty": 5,
+        "display_order": 22,
+        "track": "认知级",
     },
     "ch23": {
         "title": "监控与日志",
@@ -173,6 +219,8 @@ CHAPTERS_META = {
         "color": "#e91e63",
         "description": "Prometheus、Grafana、Fluent Bit，构建可观测性体系",
         "difficulty": 4,
+        "display_order": 23,
+        "track": "认知级",
     },
     "ch24": {
         "title": "安全策略进阶",
@@ -180,6 +228,8 @@ CHAPTERS_META = {
         "color": "#b71c1c",
         "description": "Admission Webhook、OPA Gatekeeper、审计日志",
         "difficulty": 5,
+        "display_order": 24,
+        "track": "认知级",
     },
     "ch25": {
         "title": "多容器模式",
@@ -187,6 +237,8 @@ CHAPTERS_META = {
         "color": "#00acc1",
         "description": "Init/Sidecar/Ambassador/Adapter，多容器设计模式",
         "difficulty": 4,
+        "display_order": 25,
+        "track": "认知级",
     },
     "ch26": {
         "title": "高级调度",
@@ -194,6 +246,8 @@ CHAPTERS_META = {
         "color": "#ab47bc",
         "description": "Topology Spread、Descheduler、调度器配置",
         "difficulty": 5,
+        "display_order": 26,
+        "track": "认知级",
     },
     "ch27": {
         "title": "Service Mesh",
@@ -201,6 +255,8 @@ CHAPTERS_META = {
         "color": "#5c6bc0",
         "description": "Istio 架构、VirtualService、DestinationRule、Gateway",
         "difficulty": 5,
+        "display_order": 27,
+        "track": "认知级",
     },
     "ch28": {
         "title": "CKA 模拟考试",
@@ -208,6 +264,9 @@ CHAPTERS_META = {
         "color": "#d84315",
         "description": "综合考核：部署、网络、存储、故障排查、RBAC",
         "difficulty": 5,
+        "display_order": 28,
+        "track": "实战级",
+        "supports_cluster_verify": True,
     },
 }
 

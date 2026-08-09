@@ -691,7 +691,7 @@ class TestMetaEndpoint:
 
 
 class TestMetaChapters:
-    """章节数量 = 24"""
+    """章节数量 = 29，display_order 字段完整"""
 
     def test_chapter_count(self):
         r = client.get("/api/meta")
@@ -713,6 +713,31 @@ class TestMetaChapters:
             assert "color" in ch_meta
             assert "description" in ch_meta
             assert "difficulty" in ch_meta
+
+    def test_chapter_has_display_order(self):
+        """每个章节都有 display_order 字段"""
+        r = client.get("/api/meta")
+        chapters = r.json()["chapters"]
+        for ch_id, ch_meta in chapters.items():
+            assert "display_order" in ch_meta, f"{ch_id} missing display_order"
+            assert isinstance(ch_meta["display_order"], int)
+
+    def test_chapter_display_order_values(self):
+        """display_order 值与 ch_id 一致 (ch00=0, ch01=1, ..., ch28=28)"""
+        r = client.get("/api/meta")
+        chapters = r.json()["chapters"]
+        for i in range(29):
+            ch_id = f"ch{i:02d}"
+            assert chapters[ch_id]["display_order"] == i, (
+                f"{ch_id} display_order should be {i}, got {chapters[ch_id]['display_order']}"
+            )
+
+    def test_chapter_display_order_unique(self):
+        """display_order 值唯一"""
+        r = client.get("/api/meta")
+        chapters = r.json()["chapters"]
+        orders = [ch["display_order"] for ch in chapters.values()]
+        assert len(orders) == len(set(orders)), "display_order values are not unique"
 
 
 class TestMetaKnowledgePoints:

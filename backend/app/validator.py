@@ -31,6 +31,7 @@ class Level:
     starter_yaml: str
     check_fn: Callable[[str], CheckResult]
     lesson: Lesson | None = None
+    track: str = ""  # 基础级 | 认知级 | 实战级 (空则继承章节 track)
 
 
 def get_level(level_id: str) -> Level | None:
