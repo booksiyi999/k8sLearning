@@ -205,7 +205,7 @@ maxSkew: 1, topologyKey: kubernetes.io/hostname
   node-c: 1 Pod   ─┘
 
 如果 node-a 有 3 Pods, node-b 有 0:
-  skew = 3-0 = 3 > maxSkew(1) → DoNotSchedule 拒绝
+  skew = 3-0 = 3 > maxSkew(1) -> DoNotSchedule 拒绝
 ```
 
 ### 多维度拓扑分布
@@ -213,6 +213,73 @@ maxSkew: 1, topologyKey: kubernetes.io/hostname
 可以同时按 zone 和 hostname 分布：
 - 先确保跨 zone 均匀（机房级容灾）
 - 再确保跨 node 均匀（节点级容灾）
+
+### Node Affinity vs Node Selector 对比
+
+在 K8s 调度中，控制 Pod 调度到哪些节点有多种方式。Node Selector 是最简单的，Node Affinity 是其增强版：
+
+| 特性 | Node Selector | Node Affinity |
+|------|--------------|---------------|
+| 语法 | `nodeSelector: {disk: ssd}` | `affinity.nodeAffinity: ...` |
+| 约束类型 | 仅硬约束 | 硬约束 + 软约束 |
+| 操作符 | 仅相等匹配 | In, NotIn, Exists, Gt, Lt |
+| 多条件 | AND（全部满足） | 可配置多条件 + 软约束权重 |
+| 版本 | v1 初始 | 1.2+（beta），1.19+（GA） |
+
+**Node Selector 示例**（简单但功能有限）：
+
+```yaml
+spec:
+  nodeSelector:
+    disktype: ssd        # 必须调度到有 disktype=ssd 标签的节点
+    zone: us-east-1a     # 且必须在 us-east-1a 区域
+```
+
+**Node Affinity 示例**（支持软约束和多种操作符）：
+
+```yaml
+spec:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:   # 硬约束
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: disktype
+            operator: In
+            values: ["ssd", "nvme"]
+      preferredDuringSchedulingIgnoredDuringExecution:  # 软约束
+      - weight: 80
+        preference:
+          matchExpressions:
+          - key: zone
+            operator: In
+            values: ["us-east-1a"]
+```
+
+> **建议**：新项目直接使用 Node Affinity。Node Selector 保留仅为向后兼容，不支持软约束和复杂匹配。
+
+### 与 Topology Spread 的配合
+
+Node Affinity 控制"调度到哪些节点"，Topology Spread 控制"在这些节点间如何分布"：
+
+```yaml
+spec:
+  affinity:
+    nodeAffinity:                    # 先筛选符合条件的节点
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: node-role
+            operator: In
+            values: ["worker"]
+  topologySpreadConstraints:         # 再在符合条件节点间均匀分布
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: DoNotSchedule
+    labelSelector:
+      matchLabels:
+        app: web-spread
+```
 """,
         key_fields=[
             {"name": "topologySpreadConstraints[].maxSkew", "description": "拓扑域间最大允许偏差", "required": True, "example": "1"},
@@ -469,11 +536,77 @@ preferredDuringSchedulingIgnoredDuringExecution:
 2. **跨区域反亲和**：topologyKey = topology.kubernetes.io/zone
 3. **硬+软组合**：硬约束跨节点，软约束跨区域
 
+### InterPodAffinity 反亲和性实战案例
+
+**场景**：数据库集群（MySQL Primary + 2 Replica），确保三个 Pod 分布在不同节点，避免单节点故障导致全部数据库实例丢失。
+
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mysql
+spec:
+  replicas: 3
+  serviceName: mysql
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      affinity:
+        podAntiAffinity:
+          # 硬约束：MySQL Pod 不能在同一节点
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values: ["mysql"]
+            topologyKey: kubernetes.io/hostname
+          # 软约束：尽量分布在不同可用区
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: mysql
+              topologyKey: topology.kubernetes.io/zone
+```
+
+**调度效果**：
+- 3 个 MySQL Pod 分别调度到 3 个不同节点（硬约束保证）
+- 优先分布到不同可用区（软约束尽量满足）
+- 如果集群只有 2 个节点，第 3 个 Pod 会 Pending
+
+**另一个实战案例**：缓存服务（Redis）与计算服务避免同节点，防止资源争抢：
+
+```yaml
+# Redis Deployment 的反亲和性
+podAntiAffinity:
+  preferredDuringSchedulingIgnoredDuringExecution:
+  - weight: 50
+    podAffinityTerm:
+      labelSelector:
+        matchLabels:
+          app: compute-worker     # 避免与计算 Pod 同节点
+      topologyKey: kubernetes.io/hostname
+```
+
 ### PodAntiAffinity vs Topology Spread
 
 - **PodAntiAffinity**：控制"不要在一起"
 - **Topology Spread**：控制"均匀分布"
 - 二者可以组合使用实现更强的高可用保证
+
+| 对比 | PodAntiAffinity | Topology Spread |
+|------|----------------|-----------------|
+| 控制方式 | 禁止同域 | 控制偏差 |
+| 精度 | 二元（同/不同） | maxSkew（允许偏差） |
+| 性能 | 大集群开销大 | 相对高效 |
+| 适用规模 | 中小集群 | 大集群推荐 |
 """,
         key_fields=[
             {"name": "affinity.podAntiAffinity", "description": "Pod 反亲和性配置", "required": True, "example": "{requiredDuringSchedulingIgnoredDuringExecution: [...]}"},
@@ -1197,13 +1330,63 @@ spec:
 ### 完整高可用策略
 
 ```
-层级 1: replicas >= 3          → Pod 级容错
-层级 2: Topology Spread         → 节点级容灾
-层级 3: PodAntiAffinity (zone)  → 可用区级容灾
-层级 4: PDB (minAvailable: 2)   → 维护期保护
-层级 5: Health Check (liveness) → 自动恢复
-层级 6: Rolling Update          → 零停机更新
+层级 1: replicas >= 3          -> Pod 级容错
+层级 2: Topology Spread         -> 节点级容灾
+层级 3: PodAntiAffinity (zone)  -> 可用区级容灾
+层级 4: PDB (minAvailable: 2)   -> 维护期保护
+层级 5: Health Check (liveness) -> 自动恢复
+层级 6: Rolling Update          -> 零停机更新
 ```
+
+### Taint/Toleration 与节点维护
+
+Taint（污点）让节点排斥 Pod，Toleration（容忍）让 Pod 可以被调度到有污点的节点。这在节点维护场景中至关重要：
+
+**节点维护流程**：
+
+```bash
+# 1. 标记节点不可调度（防止新 Pod 调度上来）
+kubectl cordon node-3
+
+# 2. 驱逐节点上的 Pod（触发滚动更新）
+kubectl drain node-3 --ignore-daemonsets --delete-emptydir-data
+
+# 3. 执行维护操作（升级内核、更换硬件等）
+# ...
+
+# 4. 维护完成后恢复节点
+kubectl uncordon node-3
+```
+
+`kubectl drain` 会自动给节点添加 `node.kubernetes.io/unschedulable:NoSchedule` 污点，并驱逐 Pod。PDB 会阻止驱逐导致服务不可用。
+
+**Toleration 配置示例**：
+
+```yaml
+spec:
+  tolerations:
+  - key: "node.kubernetes.io/unschedulable"
+    operator: "Exists"
+    effect: "NoSchedule"
+  # 关键服务可以容忍 NotReady 节点
+  - key: "node.kubernetes.io/not-ready"
+    operator: "Exists"
+    effect: "NoExecute"
+    tolerationSeconds: 300    # 节点 NotReady 后最多等 5 分钟
+```
+
+**常见 Taint 类型**：
+
+| Taint | 效果 | 说明 |
+|-------|------|------|
+| `node.kubernetes.io/not-ready` | NoExecute | 节点未就绪 |
+| `node.kubernetes.io/unreachable` | NoExecute | 节点不可达 |
+| `node.kubernetes.io/unschedulable` | NoSchedule | 节点不可调度 |
+| `node.kubernetes.io/disk-pressure` | NoSchedule | 磁盘压力 |
+| `node.kubernetes.io/memory-pressure` | NoSchedule | 内存压力 |
+| `dedicated=gpu:NoSchedule` | NoSchedule | 专用 GPU 节点 |
+
+**Taint vs Node Affinity**：Taint 是"节点排斥 Pod"（推），Node Affinity 是"Pod 选择节点"（拉）。生产环境通常两者配合使用：Taint 保证专用节点只跑特定 Pod，Node Affinity 保证特定 Pod 只跑在专用节点上。
 
 ### 生产配置清单
 
@@ -1211,6 +1394,7 @@ spec:
 - ✅ topologySpreadConstraints (跨节点)
 - ✅ podAntiAffinity (跨可用区, 软约束)
 - ✅ PodDisruptionBudget (minAvailable: 2)
+- ✅ Taint/Toleration (专用节点隔离)
 - ✅ resources.requests/limits
 - ✅ livenessProbe + readinessProbe
 - ✅ rollingUpdate 策略

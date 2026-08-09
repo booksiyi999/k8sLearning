@@ -230,6 +230,75 @@ spec:
 - 注册服务到服务发现
 - 克隆 Git 仓库到共享卷
 - 数据库迁移脚本执行
+
+### 真实场景示例：数据库迁移
+
+在应用启动前执行数据库 migration，确保 schema 最新：
+
+```yaml
+initContainers:
+- name: db-migrate
+  image: myapp/migrator:latest
+  command: ["./migrate", "--up"]
+  env:
+  - name: DATABASE_URL
+    valueFrom:
+      secretKeyRef:
+        name: db-secret
+        key: url
+```
+
+如果迁移失败，主容器不会启动，避免了应用使用过期 schema 的风险。
+
+### 真实场景示例：Git Clone
+
+在主容器启动前克隆配置仓库到共享卷：
+
+```yaml
+initContainers:
+- name: git-clone
+  image: alpine/git:latest
+  command:
+  - sh
+  - "-c"
+  - "git clone https://github.com/myorg/configs /configs"
+  volumeMounts:
+  - name: configs
+    mountPath: /configs
+```
+
+### 调试技巧
+
+Init Container 调试与普通容器不同，因为它运行后即退出：
+
+```bash
+# 查看 Init Container 日志（-c 指定容器名）
+kubectl logs <pod-name> -c init-mysql
+
+# 查看 Pod 状态，Init Status 列显示初始化进度
+kubectl get pods
+# NAME         READY   STATUS     RESTARTS   AGE
+# init-demo    0/1     Init:0/1   0          5s
+
+# 查看详细事件，包括 Init Container 的启动和退出信息
+kubectl describe pod <pod-name>
+# Events:
+#   Normal  Pulled     3s   kubelet  Successfully pulled image "busybox:1.36"
+#   Normal  Created    3s   kubelet  Created container init-mysql
+#   Normal  Started    3s   kubelet  Started container init-mysql
+#   Normal  Pulled     2s   kubelet  Successfully pulled image "nginx:1.25"
+```
+
+常见 Init 状态含义：
+
+| 状态 | 含义 |
+|------|------|
+| `Init:0/2` | 2 个 initContainer，0 个完成 |
+| `Init:1/2` | 2 个 initContainer，1 个完成 |
+| `Init:Error` | initContainer 执行失败 |
+| `Init:CrashLoopBackOff` | initContainer 反复失败重启 |
+
+> **注意**：Init Container 不支持 `livenessProbe`/`readinessProbe`，因为它需要运行完成而非持续运行。
 """,
         key_fields=[
             {"name": "spec.initContainers", "description": "初始化容器列表，顺序执行", "required": True, "example": "[{name: init-db, image: busybox:1.36}]"},
@@ -680,6 +749,63 @@ spec:
 | MySQL 代理 | 读写分离 | MySQL 主从 |
 | StatsD 代理 | 指标聚合转发 | 监控后端 |
 
+### Envoy 配置示例
+
+Ambassador 模式中最常用的代理是 Envoy。以下是一个将 localhost:6379 代理到外部 Redis 集群的 Envoy 配置：
+
+```yaml
+# Envoy Listener: 监听 localhost:6379
+static_resources:
+  listeners:
+  - name: redis_listener
+    address:
+      socket_address: { address: 127.0.0.1, port_value: 6379 }
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.tcp_proxy
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.tcp_proxy.v3.TcpProxy
+          stat_prefix: redis_proxy
+          cluster: redis_cluster
+  clusters:
+  - name: redis_cluster
+    type: STRICT_DNS
+    lb_policy: ROUND_ROBIN
+    load_assignment:
+      cluster_name: redis_cluster
+      endpoints:
+      - lb_endpoints:
+        - endpoint:
+            address:
+              socket_address: { address: redis-0.redis, port_value: 6379 }
+```
+
+主容器只需 `redis-cli -h localhost ping`，Envoy 负责将请求路由到外部 Redis 集群，并处理故障转移和负载均衡。
+
+### Ambassador 与 Istio Sidecar 的关系
+
+Istio Service Mesh 中的 Envoy Sidecar 本质上就是 Ambassador 模式的大规模应用：
+
+| 对比 | 手动 Ambassador | Istio Sidecar |
+|------|----------------|---------------|
+| 注入方式 | 手动配置 | 自动注入（sidecar injection） |
+| 代理范围 | 单个 Pod 内 | 整个 Service Mesh |
+| 配置管理 | ConfigMap/文件 | 控制平面下发（xDS） |
+| 适用场景 | 单个服务代理 | 全集群流量管理 |
+
+Istio 将 Ambassador 模式标准化：每个 Pod 自动注入 Envoy sidecar，应用容器通过 localhost 与 Envoy 通信，Envoy 负责所有的服务间通信、TLS、熔断、重试等。
+
+### 何时选择 Ambassador vs 外部 Service
+
+| 因素 | 选择 Ambassador | 选择外部 Service |
+|------|----------------|-----------------|
+| 连接复杂度 | 高（多后端、TLS、连接池） | 低（单一后端） |
+| 环境一致性 | 需要开发/生产统一 localhost | 不同环境地址不同 |
+| 资源开销 | 可接受额外容器开销 | 需要最小化资源 |
+| 运维复杂度 | 可接受 Pod 内多容器 | 倾向简单架构 |
+
+> **经验法则**：当外部连接逻辑复杂（如 Redis Cluster 的分片路由、MySQL 读写分离），或需要在开发/生产保持一致的 localhost 连接方式时，选择 Ambassador 模式。
+
 ### Ambassador 与 Sidecar 的区别
 
 - **Sidecar**：辅助主容器的功能（日志、监控等），不一定代理外部连接
@@ -885,17 +1011,74 @@ spec:
 
 1. **格式标准化**：将异构输出统一为标准格式
 2. **解耦转换逻辑**：主容器无需关心输出格式要求
-3. **协议适配**：不同协议间的转换（如 JSON→Prometheus metrics）
+3. **协议适配**：不同协议间的转换（如 JSON->Prometheus metrics）
 4. **不侵入主容器**：通过共享卷读取输出，不修改主容器代码
 
 ### 典型 Adapter 场景
 
 | 场景 | 主容器输出 | Adapter 转换 |
 |------|-----------|-------------|
-| 日志标准化 | Nginx 日志格式 | Fluent Bit → JSON |
-| 监控指标 | 应用自有指标 | exporter → Prometheus 格式 |
+| 日志标准化 | Nginx 日志格式 | Fluent Bit -> JSON |
+| 监控指标 | 应用自有指标 | exporter -> Prometheus 格式 |
 | 消息转换 | 自定义协议 | 适配为标准 HTTP/JSON |
 | 数据清洗 | 原始数据 | 格式化+过滤+增强 |
+
+### Fluent Bit 配置示例
+
+Fluent Bit 是最常用的日志 Adapter。以下配置将 Nginx 的默认日志格式解析为结构化 JSON，再转发到 Elasticsearch：
+
+```ini
+# fluent-bit.conf
+[SERVICE]
+    Flush         5
+    Log_Level     info
+
+[INPUT]
+    Name          tail
+    Path          /var/log/input/access.log
+    Parser        nginx
+    Tag           nginx.access
+
+# Nginx 日志解析规则
+[PARSER]
+    Name          nginx
+    Format        regex
+    Regex         ^(?<remote>[^ ]*) (?<host>[^ ]*) (?<user>[^ ]*) \\[(?<time>[^\\]]*)\\] "(?<method>\\S+)(?: +(?<path>[^\\"]*?)(?: +\\S*)?)?" (?<code>[^ ]*) (?<size>[^ ]*) "(?<referer>[^\\"]*)" "(?<agent>[^\\"]*)"$
+    Time_Key      time
+    Time_Format   %d/%b/%Y:%H:%M:%S %z
+
+[OUTPUT]
+    Name          es
+    Match         nginx.*
+    Host          elasticsearch
+    Port          9200
+    Index         nginx-logs
+    Type          _doc
+```
+
+在 Pod 中，Fluent Bit 容器挂载与 Nginx 相同的共享卷，读取日志文件并转换格式后输出。Nginx 完全不需要修改日志配置。
+
+### Prometheus Exporter 实例
+
+当应用暴露非标准指标时，可以使用 Adapter 容器将其转换为 Prometheus 格式。例如，使用 `nginx-prometheus-exporter` 将 Nginx 的 status 信息转换为标准 metrics：
+
+```yaml
+containers:
+- name: app                    # 主容器：Nginx
+  image: nginx:1.25
+  # 开启 stub_status 提供原始指标
+
+- name: nginx-exporter         # Adapter：格式转换
+  image: nginx/nginx-prometheus-exporter:1.1
+  args:
+  - "-nginx.scrape-uri=http://localhost:8080/stub_status"
+  ports:
+  - containerPort: 9113        # 暴露 Prometheus 格式指标
+```
+
+数据流：`Nginx stub_status` → `exporter 转换` → `Prometheus 格式 /metrics` → `Prometheus 抓取`
+
+Adapter 让 Prometheus 可以统一抓取所有应用的指标，无论原始格式如何。
 
 ### 四种多容器模式对比
 

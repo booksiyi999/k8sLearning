@@ -142,6 +142,73 @@ Job 的 Pod 模板中 `restartPolicy` 只能是 `Never` 或 `OnFailure`，**不�
 - `Never`：Pod 失败后直接创建新 Pod 重试
 - `OnFailure`：Pod 失败后在同一 Pod 内重启容器
 
+### 失败重试策略：backoffLimit
+
+`spec.backoffLimit` 控制 Job 失败后的重试次数（默认 6）。每次重试的间隔按指数增长（10s, 20s, 40s, ...），避免频繁重试压垮依赖服务：
+
+```yaml
+spec:
+  backoffLimit: 4          # 最多重试 4 次
+  template:
+    spec:
+      containers:
+      - name: task
+        image: busybox:1.36
+        command: ["sh", "-c", "exit 1"]   # 模拟失败
+      restartPolicy: Never
+```
+
+重试行为与 restartPolicy 的关系：
+
+| restartPolicy | Pod 失败行为 | backoffLimit 作用 |
+|---------------|-------------|-------------------|
+| `Never` | 删除旧 Pod，创建新 Pod | 限制创建新 Pod 的次数 |
+| `OnFailure` | 同一 Pod 内重启容器 | 限制重启次数 |
+
+超过 backoffLimit 后，Job 标记为 Failed，不再重试。
+
+### 超时控制：activeDeadlineSeconds
+
+`spec.activeDeadlineSeconds` 设置 Job 的最长运行时间。超时后 Job 被强制终止并标记为 Failed，即使 Pod 还在运行：
+
+```yaml
+spec:
+  activeDeadlineSeconds: 300   # 最长运行 5 分钟
+  backoffLimit: 3
+  template:
+    spec:
+      containers:
+      - name: task
+        image: myapp/batch:latest
+      restartPolicy: Never
+```
+
+> **注意**：activeDeadlineSeconds 优先于 backoffLimit。如果 Job 运行超时，即使还有重试次数也会被终止。这在防止 Job 卡死（如死锁、网络挂起）时非常重要。
+
+### Job 清理策略：ttlSecondsAfterFinished
+
+Job 完成后默认保留 Pod 和 Job 对象（方便查看日志和状态）。但在生产环境中，大量已完成 Job 会占用 etcd 存储。`spec.ttlSecondsAfterFinished` 可以自动清理：
+
+```yaml
+spec:
+  ttlSecondsAfterFinished: 100   # 完成 100 秒后自动删除 Job 和关联 Pod
+  template:
+    spec:
+      containers:
+      - name: task
+        image: busybox:1.36
+        command: ["echo", "done"]
+      restartPolicy: Never
+```
+
+| ttlSecondsAfterFinished | 行为 |
+|--------------------------|------|
+| 未设置（默认） | Job 和 Pod 永久保留，需手动删除 |
+| `0` | 完成后立即删除 |
+| `100` | 完成 100 秒后自动删除 |
+
+TTL Controller 会在 Job 完成（成功或失败）后等待指定秒数，然后自动删除 Job 及其关联的 Pod。
+
 ### 典型使用场景
 
 - 批量数据处理（ETL）
@@ -709,8 +776,8 @@ schedule: */1 * * * *
 concurrencyPolicy: Forbid
 
 00:00 - Job-A 启动（预计运行 90 秒）
-00:01 - Job-A 仍在运行 → 跳过本次触发
-00:02 - Job-A 完成 → 下次 00:03 正常触发 Job-B
+00:01 - Job-A 仍在运行 -> 跳过本次触发
+00:02 - Job-A 完成 -> 下次 00:03 正常触发 Job-B
 ```
 
 Forbid 策略保证同一时间最多只有一个 Job 在运行，适合：
@@ -718,9 +785,53 @@ Forbid 策略保证同一时间最多只有一个 Job 在运行，适合：
 - 状态同步（不能同时修改同一份数据）
 - 资源密集型任务（避免资源争抢）
 
+### Replace 策略详解
+
+```
+schedule: */1 * * * *
+concurrencyPolicy: Replace
+
+00:00 - Job-A 启动（数据同步任务）
+00:01 - Job-A 仍在运行，触发时间到达
+       -> 终止 Job-A，启动 Job-B
+       -> 只有最新的同步结果保留
+```
+
+Replace 策略会主动终止正在运行的旧 Job，适合：
+- 数据同步（只需要最新数据）
+- 缓存刷新（旧任务结果已过时）
+- 报表生成（只需要最新报表）
+
+### Allow 策略详解
+
+Allow 是默认策略，新旧 Job 可以同时运行。适合：
+- 独立的数据分片处理
+- 日志清理（每次清理不同时间段）
+- 发送通知邮件（互不影响）
+
+> **注意**：Allow 策略下，如果任务执行时间持续超过调度间隔，可能堆积大量并行 Job，消耗集群资源。建议配合 `startingDeadlineSeconds` 和资源限制使用。
+
 ### startingDeadlineSeconds
 
-如果 CronJob 错过了调度时间（如 Forbid 跳过），`startingDeadlineSeconds` 设置错过多久后不再执行。默认不设限制。
+如果 CronJob 错过了调度时间（如 Forbid 跳过），`startingDeadlineSeconds` 设置错过多久后不再执行。默认不设限制：
+
+```yaml
+spec:
+  schedule: "*/1 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 200   # 错过 200 秒后不再补执行
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: task
+            image: busybox:1.36
+            command: ["sleep", "90"]
+          restartPolicy: Never
+```
+
+如果 CronJob Controller 本身不可用（如集群维护），恢复后会在 `startingDeadlineSeconds` 时间窗口内统计错过的触发次数。超过 100 次错过的触发会被标记为 Failed。
 """,
         key_fields=[
             {"name": "spec.concurrencyPolicy", "description": "并发策略: Allow/Forbid/Replace", "required": True, "example": "Forbid"},
@@ -916,10 +1027,10 @@ spec:
 ### Job 状态流转
 
 ```
-创建 Job → 创建 Pod → Pod Running → Pod Succeeded → Job Complete
+创建 Job -> 创建 Pod -> Pod Running -> Pod Succeeded -> Job Complete
                                     ↓ Pod Failed
-                                    → 重试 (backoffLimit)
-                                    → 超过限制 → Job Failed
+                                    -> 重试 (backoffLimit)
+                                    -> 超过限制 -> Job Failed
 ```
 
 ### 关键状态字段
@@ -935,18 +1046,57 @@ spec:
 | Never | 删除旧 Pod，创建新 Pod | 限制创建新 Pod 的次数 |
 | OnFailure | 同一 Pod 内重启容器 | 限制重启次数 |
 
-### Job 完成后的清理
+### Job 完成后的清理策略
 
-- 默认保留完成的 Pod（方便查看日志）
-- 可通过 `ttlSecondsAfterFinished` 自动清理
-- 手动清理：`kubectl delete job <name>`
+Job 完成后默认保留 Pod 和 Job 对象，方便查看日志和排查问题。但在生产环境中，大量已完成 Job 会占用 etcd 存储，需要清理策略：
+
+**1. ttlSecondsAfterFinished（自动清理）**
+
+```yaml
+spec:
+  ttlSecondsAfterFinished: 60    # 完成 60 秒后自动删除
+  template:
+    spec:
+      containers:
+      - name: task
+        image: busybox:1.36
+        command: ["echo", "done"]
+      restartPolicy: Never
+```
+
+TTL Controller 会在 Job 完成（成功或失败）后等待指定秒数，然后自动删除 Job 及其关联的 Pod。
+
+**2. 手动清理**
+
+```bash
+# 删除单个 Job（同时删除关联 Pod）
+kubectl delete job <name>
+
+# 删除所有已完成 Job
+kubectl delete jobs -n <namespace> --field-selector=status.successful=1
+
+# 清理失败的 Job
+kubectl delete jobs -n <namespace> --field-selector=status.failed=1
+```
+
+**3. CronJob 历史限制**
+
+CronJob 可以通过 `successfulJobsHistoryLimit` 和 `failedJobsHistoryLimit` 控制保留的 Job 数量：
+
+```yaml
+spec:
+  schedule: "*/1 * * * *"
+  successfulJobsHistoryLimit: 3   # 保留 3 个成功 Job（默认 3）
+  failedJobsHistoryLimit: 1       # 保留 1 个失败 Job（默认 1）
+```
 
 ### 真实场景注意事项
 
-1. **资源请求**：为 Job 设置合理的 resources.requests
-2. **超时控制**：使用 `activeDeadlineSeconds` 限制 Job 最长运行时间
-3. **并发控制**：大任务拆分用 parallelism/completions
-4. **日志收集**：Job Pod 完成后日志仍可查看，但 Pod 被删除后丢失
+1. **资源请求**：为 Job 设置合理的 resources.requests，避免资源不足导致 Pending
+2. **超时控制**：使用 `activeDeadlineSeconds` 限制 Job 最长运行时间，防止卡死
+3. **并发控制**：大任务拆分用 parallelism/completions，注意集群容量
+4. **日志收集**：Job Pod 完成后日志仍可查看，但 Pod 被删除后丢失，建议提前收集
+5. **幂等性**：设计 Job 任务时确保幂等（重试不会产生副作用），因为 backoffLimit 可能触发多次执行
 """,
         key_fields=[
             {"name": "spec.template.spec.containers[].image", "description": "容器镜像", "required": True, "example": "perl:5.38"},
