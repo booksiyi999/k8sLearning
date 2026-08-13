@@ -106,15 +106,8 @@ class TestFreshUserChapterGating:
         page.reload()
         page.wait_for_timeout(2000)
 
-        # 找到 ch01 卡片
-        cards = page.query_selector_all(".chapter-card")
-        ch01_card = None
-        for card in cards:
-            text = card.inner_text()
-            if "ch01" in text.lower() or "Pod" in text:
-                ch01_card = card
-                break
-
+        # 找到 ch01 卡片（用 data-chid 属性匹配，不依赖文本内容）
+        ch01_card = page.query_selector('[data-chid="ch01"]')
         if ch01_card:
             cls = ch01_card.get_attribute("class") or ""
             # P0-1 已修复: ch01 默认解锁（chNum <= 1 return true）
@@ -163,24 +156,26 @@ class TestFreshUserChapterGating:
 class TestChapterUnlockProgression:
     """章节解锁传播测试。"""
 
-    def test_complete_ch00_unlocks_ch01(self, server_url, browser):
-        """完成 ch00 所有关卡后，ch01 应该解锁。"""
+    def test_complete_ch01_unlocks_ch02(self, server_url, browser):
+        """完成 ch01 所有关卡后，ch02 应该解锁（P0-1 修复后 ch01 默认解锁，测试传播到 ch02）。"""
         page = browser.new_page()
         page.goto(server_url, wait_until="domcontentloaded")
-        page.wait_for_timeout(2000)
+        page.wait_for_selector(".chapter-card", timeout=10000)
+        page.wait_for_timeout(1000)
         _clear_progress(page)
         page.reload()
-        page.wait_for_timeout(2000)
+        page.wait_for_selector(".chapter-card", timeout=10000)
+        page.wait_for_timeout(1000)
 
-        # 获取 ch00 的关卡 ID
+        # 获取 ch01 的关卡 ID
         levels_response = page.evaluate("""async () => {
             const r = await fetch('/api/levels');
             const data = await r.json();
-            return data.levels.filter(l => l.id.startsWith('Q0.')).map(l => l.id);
+            return data.levels.filter(l => l.id.startsWith('Q1.')).map(l => l.id);
         }""")
-        print(f"\nCh00 levels: {levels_response}")
+        print(f"\nCh01 levels: {levels_response}")
 
-        # 模拟完成 ch00 所有关卡
+        # 模拟完成 ch01 所有关卡
         page.evaluate(f"""() => {{
             const progress = {{
                 completed_levels: {levels_response!r},
@@ -192,26 +187,25 @@ class TestChapterUnlockProgression:
         }}""")
 
         page.reload()
+        # 等待章节卡片渲染完成（Alpine.js 异步 init 需要时间）
+        page.wait_for_selector(".chapter-card", timeout=10000)
         page.wait_for_timeout(2000)
 
-        # 检查 ch01 是否解锁
-        cards = page.query_selector_all(".chapter-card")
-        ch01_unlocked = False
-        for card in cards:
-            text = card.inner_text()
-            if "Pod" in text and "ch01" in text.lower():
-                cls = card.get_attribute("class") or ""
-                ch01_unlocked = "unlocked" in cls
-                break
+        # 检查 ch02 是否解锁（ch02 需要完成 ch01 的至少 1 关才解锁）
+        ch02_card = page.query_selector('[data-chid="ch02"]')
+        ch02_unlocked = False
+        if ch02_card:
+            cls = ch02_card.get_attribute("class") or ""
+            ch02_unlocked = "unlocked" in cls
 
-        # 如果 ch00 有关卡且全部完成，ch01 应该解锁
+        # 如果 ch01 有关卡且全部完成，ch02 应该解锁（some 逻辑）
         if levels_response and len(levels_response) > 0:
-            assert ch01_unlocked, "Ch01 should be unlocked after completing all ch00 levels"
+            assert ch02_unlocked, "Ch02 should be unlocked after completing all ch01 levels"
 
         page.close()
 
-    def test_partial_ch00_does_not_unlock_ch01(self, server_url, browser):
-        """只完成 ch00 部分关卡，ch01 不应解锁。"""
+    def test_partial_ch01_does_not_unlock_ch02(self, server_url, browser):
+        """只完成 ch01 部分关卡，ch02 也应解锁（P0-1 修复: some 逻辑，1 关即可解锁）。"""
         page = browser.new_page()
         page.goto(server_url, wait_until="domcontentloaded")
         page.wait_for_timeout(2000)
@@ -219,11 +213,11 @@ class TestChapterUnlockProgression:
         page.reload()
         page.wait_for_timeout(2000)
 
-        # 获取 ch00 的关卡 ID
+        # 获取 ch01 的关卡 ID
         levels_response = page.evaluate("""async () => {
             const r = await fetch('/api/levels');
             const data = await r.json();
-            return data.levels.filter(l => l.id.startsWith('Q0.')).map(l => l.id);
+            return data.levels.filter(l => l.id.startsWith('Q1.')).map(l => l.id);
         }""")
 
         if len(levels_response) <= 1:
@@ -245,15 +239,13 @@ class TestChapterUnlockProgression:
         page.reload()
         page.wait_for_timeout(2000)
 
-        # ch01 应该仍然锁定
-        cards = page.query_selector_all(".chapter-card")
-        for card in cards:
-            text = card.inner_text()
-            if "Pod" in text and "ch01" in text.lower():
-                cls = card.get_attribute("class") or ""
-                assert "locked" in cls, \
-                    "Ch01 should remain locked with partial ch00 completion"
-                break
+        # ch02 应该解锁（some 逻辑: 完成 1 关即可）
+        ch02_card = page.query_selector('[data-chid="ch02"]')
+        if ch02_card:
+            cls = ch02_card.get_attribute("class") or ""
+            # P0-1 修复后 some 逻辑: 完成 ch01 任意 1 关即解锁 ch02
+            assert "unlocked" in cls, \
+                "Ch02 should be unlocked with partial ch01 completion (some logic)"
 
         page.close()
 

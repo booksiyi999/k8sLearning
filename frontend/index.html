@@ -59,6 +59,7 @@
       <h3 class="sidebar-title">📚 章节导航</h3>
       <template x-for="(ch, chId) in chapters" :key="chId">
         <div class="chapter-card"
+             :data-chid="chId"
              :class="{ unlocked: isChapterUnlocked(chId), locked: !isChapterUnlocked(chId) }"
              :style="`--ch-color: ${ch.color}`">
 
