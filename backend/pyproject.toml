@@ -1,3 +1,10 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+
 [project]
 name = "k8s-quest-backend"
 version = "0.1.0"

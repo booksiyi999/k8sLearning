@@ -28,8 +28,8 @@ COPY frontend/ /app/frontend/
 
 WORKDIR /app/backend
 
-# 安装依赖
-RUN pip install --no-cache-dir -e .
+# 安装依赖（--no-build-isolation 确保用容器内 setuptools，避免缺 [build-system] 时回退失败）
+RUN pip install --no-cache-dir -e ".[dev]"
 
 # 健康检查
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
@@ -41,6 +41,5 @@ CMD ["uvicorn", "app.main:app", \
      "--host", "0.0.0.0", \
      "--port", "8000", \
      "--workers", "2", \
-     "--preload", \
      "--proxy-headers", \
      "--forwarded-allow-ips=*"]
