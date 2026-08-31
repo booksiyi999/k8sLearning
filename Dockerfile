@@ -12,14 +12,14 @@ ENV TZ=Asia/Shanghai \
 WORKDIR /app
 
 # 系统依赖（curl + kubectl for 集群模式）
+# 注意：官方 apt 源 apt.kubernetes.io/kubernetes-xenial 已下架（404），
+#       改用官方推荐的二进制直装方式，兼容 amd64/arm64，不依赖 apt 仓库。
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
-    apt-transport-https \
     ca-certificates \
-    gnupg \
-    && curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/kubernetes-archive-keyring.gpg \
-    && echo "deb [signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://apt.kubernetes.io/ kubernetes-xenial main" > /etc/apt/sources.list.d/kubernetes.list \
-    && apt-get update && apt-get install -y --no-install-recommends kubectl \
+    && ARCH="$(dpkg --print-architecture)" \
+    && curl -fsSL "https://dl.k8s.io/release/v1.31.0/bin/linux/${ARCH}/kubectl" -o /usr/local/bin/kubectl \
+    && chmod +x /usr/local/bin/kubectl \
     && rm -rf /var/lib/apt/lists/*
 
 # 保持与本地开发一致的目录结构，使 main.py 中的路径解析正确

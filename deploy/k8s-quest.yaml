@@ -1,0 +1,81 @@
+# k8s-quest 隔离部署清单（openEuler + K8s）
+# 参考 mooncake v0.3.10 USAGE.md 的部署模式，针对轻量 Web 应用简化：
+#   - 无 NPU / 无 privileged / 无 hostPath
+#   - 独立 namespace + 资源限制 + NodePort 不占公共端口
+#   - 学习进度存在浏览器 localStorage，容器无状态，无需 PVC
+#
+# 构建: podman build -t k8s-quest:v2 -f Dockerfile .
+# 导入: sudo ctr -n k8s.io images import /tmp/k8s-quest.tar
+# 部署: kubectl apply -f deploy/k8s-quest.yaml
+# 访问: kubectl -n k8s-quest port-forward svc/k8s-quest 8000:8000
+#       然后浏览器打开 http://localhost:8000 （仅本机可访问）
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: k8s-quest
+  labels:
+    app: k8s-quest
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k8s-quest
+  namespace: k8s-quest
+  labels:
+    app: k8s-quest
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: k8s-quest
+  template:
+    metadata:
+      labels:
+        app: k8s-quest
+    spec:
+      containers:
+        - name: k8s-quest
+          image: localhost/k8s-quest:v2
+          imagePullPolicy: Never          # 本地镜像，禁止去远端拉
+          ports:
+            - containerPort: 8000
+          resources:
+            requests:                      # 保底资源，不影响他人
+              cpu: "100m"
+              memory: "128Mi"
+            limits:                        # 上限，防止吃光节点资源
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:                   # 健康检查，挂了自动重启
+            httpGet:
+              path: /api/health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 8000
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          securityContext:                 # 最小权限，非特权
+            runAsNonRoot: false            # python:3.11-slim 默认 root，保持容器内即可
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false   # uvicorn 需写临时文件
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: k8s-quest
+  namespace: k8s-quest
+spec:
+  type: ClusterIP                          # 不用 NodePort，避免占用节点公共端口
+  selector:
+    app: k8s-quest
+  ports:
+    - port: 8000
+      targetPort: 8000
+      protocol: TCP
