@@ -35,6 +35,7 @@ spec:
       labels:
         app: k8s-quest
     spec:
+      nodeName: m1                           # 固定调度到 m1（镜像只导入了 m1）
       containers:
         - name: k8s-quest
           image: localhost/k8s-quest:v2
