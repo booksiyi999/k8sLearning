@@ -38,7 +38,7 @@ spec:
       nodeName: m1                           # 固定调度到 m1（镜像只导入了 m1）
       containers:
         - name: k8s-quest
-          image: localhost/k8s-quest:v2
+          image: k8s-quest:v2
           imagePullPolicy: Never          # 本地镜像，禁止去远端拉
           ports:
             - containerPort: 8000
