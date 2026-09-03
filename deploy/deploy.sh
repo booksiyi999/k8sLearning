@@ -94,14 +94,11 @@ echo "  导入到 containerd（${CLUSTER_TYPE}）..."
 $CTR_CMD images import /tmp/k8s-quest.tar
 rm -f /tmp/k8s-quest.tar
 
+echo "  打标签 k8s-quest:v2（避免 CRI 归一化不匹配）..."
+$CTR_CMD images tag --force localhost/k8s-quest:v2 k8s-quest:v2 2>/dev/null || true
+
 echo "  确认 CRI 能看到镜像..."
-if $CRICTL_CMD images 2>/dev/null | grep -q 'k8s-quest'; then
-    echo "  ✓ CRI 已识别镜像"
-else
-    echo "  ⚠ CRI 暂未识别，尝试打标签..."
-    $CTR_CMD images tag --force localhost/k8s-quest:v2 k8s-quest:v2 2>/dev/null || true
-    $CRICTL_CMD images | grep 'k8s-quest' && echo "  ✓ 标签修复成功" || echo "  ✗ 镜像导入失败"
-fi
+$CRICTL_CMD images | grep 'k8s-quest' && echo "  ✓ CRI 已识别镜像" || echo "  ✗ 镜像导入失败"
 
 # ── 步骤 6: 部署 ──
 echo ""
